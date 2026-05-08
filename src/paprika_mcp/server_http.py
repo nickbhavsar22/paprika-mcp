@@ -1,8 +1,15 @@
-"""Streamable HTTP transport for Paprika MCP, with bearer-token auth.
+"""Streamable HTTP transport for Paprika MCP.
 
 Exposes the same `Server("paprika")` instance defined in `server.py`, but
 over Streamable HTTP so it can be reached by claude.ai web/mobile via a
 Custom Connector.
+
+Auth model: the value of MCP_BEARER_TOKEN is embedded in the URL path
+(`/mcp/<TOKEN>/`). claude.ai's connector UI does not support pasting a
+static Bearer header (only OAuth client_id/secret), so a path-segment
+secret is the simplest viable scheme. All other paths return 404 so
+claude.ai's OAuth discovery probes fail cleanly and it falls back to
+no-auth mode.
 """
 
 from __future__ import annotations
@@ -12,10 +19,8 @@ from contextlib import asynccontextmanager
 
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
-from starlette.middleware import Middleware
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.responses import PlainTextResponse
 from starlette.routing import Mount, Route
 
 from .server import app as mcp_app
@@ -31,20 +36,6 @@ def _required_env(name: str) -> str:
 BEARER_TOKEN = _required_env("MCP_BEARER_TOKEN")
 
 
-class BearerAuth(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        # Allow unauthenticated health checks
-        if request.url.path == "/healthz":
-            return await call_next(request)
-        auth = request.headers.get("authorization", "")
-        if auth != f"Bearer {BEARER_TOKEN}":
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return await call_next(request)
-
-
-# Stateless mode: every request is self-contained — no in-memory session
-# state — which is essential when running on a free tier that may spin
-# down between calls.
 session_manager = StreamableHTTPSessionManager(
     app=mcp_app,
     json_response=False,
@@ -65,9 +56,8 @@ async def healthz(_request: Request) -> PlainTextResponse:
 asgi_app = Starlette(
     routes=[
         Route("/healthz", healthz),
-        Mount("/mcp", app=session_manager.handle_request),
+        Mount(f"/mcp/{BEARER_TOKEN}", app=session_manager.handle_request),
     ],
-    middleware=[Middleware(BearerAuth)],
     lifespan=lifespan,
 )
 
