@@ -25,6 +25,8 @@ authors = [
 dependencies = [
     "mcp>=1.0.0",
     "paprika-recipes @ git+https://github.com/briantkatch/paprika-recipes@2.5.1",
+    "starlette>=0.40",
+    "uvicorn[standard]>=0.30",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +40,7 @@ dev = [
 
 [project.scripts]
 paprika-mcp = "paprika_mcp.__main__:main"
+paprika-mcp-http = "paprika_mcp.server_http:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/paprika_mcp"]

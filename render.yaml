@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: paprika-mcp
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: PAPRIKA_EMAIL
+        sync: false
+      - key: PAPRIKA_PASSWORD
+        sync: false
+      - key: MCP_BEARER_TOKEN
+        generateValue: true
