@@ -457,3 +457,163 @@ def resolve_date(date_str: str) -> str:
         "Use YYYY-MM-DD, 'today', 'tomorrow', 'yesterday', "
         "a day name like 'monday', or 'next monday'."
     )
+
+
+# --- Grocery utilities ---
+
+# Module-level caches (persist for server lifetime)
+_grocery_lists_cache: list[dict[str, Any]] | None = None
+_grocery_aisles_cache: list[dict[str, Any]] | None = None
+
+
+def get_grocery_lists(bearer_token: str) -> list[dict[str, Any]]:
+    """Get all grocery lists from Paprika API with caching.
+
+    Returns list of dicts with keys: uid, name, order_flag, is_default, reminders_list.
+    Sorted by order_flag.
+    """
+    global _grocery_lists_cache
+
+    if _grocery_lists_cache is not None:
+        return _grocery_lists_cache
+
+    headers = {"Authorization": f"Bearer {bearer_token}"}
+    try:
+        resp = requests.get(
+            f"{PAPRIKA_API_BASE}/grocerylists/",
+            headers=headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        _grocery_lists_cache = resp.json().get("result", [])
+        _grocery_lists_cache.sort(key=lambda gl: gl.get("order_flag", 0))
+        return _grocery_lists_cache
+    except requests.RequestException as e:
+        logger.warning(f"Failed to fetch grocery lists: {e}")
+        return []
+
+
+def get_grocery_aisles(bearer_token: str) -> list[dict[str, Any]]:
+    """Get all grocery aisles from Paprika API with caching.
+
+    Returns list of dicts with keys: uid, name, order_flag.
+    Sorted by order_flag.
+    """
+    global _grocery_aisles_cache
+
+    if _grocery_aisles_cache is not None:
+        return _grocery_aisles_cache
+
+    headers = {"Authorization": f"Bearer {bearer_token}"}
+    try:
+        resp = requests.get(
+            f"{PAPRIKA_API_BASE}/groceryaisles/",
+            headers=headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        _grocery_aisles_cache = resp.json().get("result", [])
+        _grocery_aisles_cache.sort(key=lambda a: a.get("order_flag", 0))
+        return _grocery_aisles_cache
+    except requests.RequestException as e:
+        logger.warning(f"Failed to fetch grocery aisles: {e}")
+        return []
+
+
+def resolve_grocery_list(
+    name_or_uid: str | None, bearer_token: str
+) -> dict[str, Any] | None:
+    """Resolve a grocery list by name (case-insensitive) or UID.
+
+    If name_or_uid is None, returns the default list.
+    Returns the list dict, or None if not found.
+    """
+    lists = get_grocery_lists(bearer_token)
+    if not lists:
+        return None
+
+    if name_or_uid is None:
+        # Return the default list
+        for gl in lists:
+            if gl.get("is_default"):
+                return gl
+        return lists[0] if lists else None
+
+    # Try UID match first
+    for gl in lists:
+        if gl["uid"] == name_or_uid:
+            return gl
+
+    # Try name match (case-insensitive)
+    name_lower = name_or_uid.lower()
+    for gl in lists:
+        if gl.get("name", "").lower() == name_lower:
+            return gl
+
+    return None
+
+
+def resolve_aisle_uid(aisle_name: str, bearer_token: str) -> str:
+    """Resolve an aisle name to its UID. Returns empty string if not found."""
+    aisles = get_grocery_aisles(bearer_token)
+    name_lower = aisle_name.lower()
+    for a in aisles:
+        if a.get("name", "").lower() == name_lower:
+            return a["uid"]
+    return ""
+
+
+def get_groceries(bearer_token: str) -> list[dict[str, Any]]:
+    """Fetch all grocery items from Paprika API.
+
+    Returns a list of grocery dicts sorted by aisle then order_flag.
+    """
+    headers = {"Authorization": f"Bearer {bearer_token}"}
+    try:
+        resp = requests.get(
+            f"{PAPRIKA_API_BASE}/groceries/",
+            headers=headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        items = resp.json().get("result", [])
+        items.sort(
+            key=lambda i: (
+                i.get("aisle", ""),
+                i.get("order_flag", 0),
+            )
+        )
+        return items
+    except requests.RequestException as e:
+        logger.warning(f"Failed to fetch groceries: {e}")
+        return []
+
+
+def save_grocery(
+    bearer_token: str, item_data: dict[str, Any]
+) -> dict[str, Any]:
+    """Create or update a grocery item via the Paprika API.
+
+    The API expects a gzip-compressed JSON list posted as multipart form-data.
+
+    Returns dict with 'success' bool and optional 'error' message.
+    """
+    headers = {"Authorization": f"Bearer {bearer_token}"}
+    try:
+        compressed = gzip.compress(json.dumps([item_data]).encode("utf-8"))
+        resp = requests.post(
+            f"{PAPRIKA_API_BASE}/groceries/",
+            headers=headers,
+            files={"data": compressed},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        if "error" in result:
+            return {
+                "success": False,
+                "error": result["error"].get("message", "Unknown error"),
+            }
+        return {"success": True}
+    except requests.RequestException as e:
+        return {"success": False, "error": str(e)}

@@ -1,15 +1,21 @@
 """Tools module - exports all MCP tool implementations."""
 
+from .add_grocery import TOOL_DEFINITION as ADD_GROCERY_DEF
+from .add_grocery import add_grocery_tool
 from .add_meal import TOOL_DEFINITION as ADD_MEAL_DEF
 from .add_meal import add_meal_tool
 from .create_recipe import TOOL_DEFINITION as CREATE_RECIPE_DEF
 from .create_recipe import create_recipe_tool
+from .delete_grocery import TOOL_DEFINITION as DELETE_GROCERY_DEF
+from .delete_grocery import delete_grocery_tool
 from .delete_meal import TOOL_DEFINITION as DELETE_MEAL_DEF
 from .delete_meal import delete_meal_tool
 from .format_fraction import TOOL_DEFINITION as FORMAT_FRACTION_DEF
 from .format_fraction import format_fraction_tool
 from .list_categories import TOOL_DEFINITION as LIST_CATEGORIES_DEF
 from .list_categories import list_categories_tool
+from .list_groceries import TOOL_DEFINITION as LIST_GROCERIES_DEF
+from .list_groceries import list_groceries_tool
 from .list_meals import TOOL_DEFINITION as LIST_MEALS_DEF
 from .list_meals import list_meals_tool
 from .read_recipe import TOOL_DEFINITION as READ_RECIPE_DEF
@@ -18,6 +24,8 @@ from .search_recipes import TOOL_DEFINITION as SEARCH_RECIPES_DEF
 from .search_recipes import search_recipes_tool
 from .set_recipe_photo import TOOL_DEFINITION as SET_RECIPE_PHOTO_DEF
 from .set_recipe_photo import set_recipe_photo_tool
+from .update_grocery import TOOL_DEFINITION as UPDATE_GROCERY_DEF
+from .update_grocery import update_grocery_tool
 from .update_meal import TOOL_DEFINITION as UPDATE_MEAL_DEF
 from .update_meal import update_meal_tool
 from .update_recipe import TOOL_DEFINITION as UPDATE_RECIPE_DEF
@@ -69,19 +77,39 @@ TOOLS = {
         "definition": DELETE_MEAL_DEF,
         "handler": delete_meal_tool,
     },
+    "list_groceries": {
+        "definition": LIST_GROCERIES_DEF,
+        "handler": list_groceries_tool,
+    },
+    "add_grocery": {
+        "definition": ADD_GROCERY_DEF,
+        "handler": add_grocery_tool,
+    },
+    "update_grocery": {
+        "definition": UPDATE_GROCERY_DEF,
+        "handler": update_grocery_tool,
+    },
+    "delete_grocery": {
+        "definition": DELETE_GROCERY_DEF,
+        "handler": delete_grocery_tool,
+    },
 }
 
 __all__ = [
     "TOOLS",
+    "add_grocery_tool",
     "add_meal_tool",
     "create_recipe_tool",
+    "delete_grocery_tool",
     "delete_meal_tool",
     "format_fraction_tool",
     "list_categories_tool",
+    "list_groceries_tool",
     "list_meals_tool",
     "read_recipe_tool",
     "search_recipes_tool",
     "set_recipe_photo_tool",
+    "update_grocery_tool",
     "update_meal_tool",
     "update_recipe_tool",
 ]
