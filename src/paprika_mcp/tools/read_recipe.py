@@ -43,7 +43,7 @@ async def read_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
         all_recipes = remote.recipes
 
         # Normalize the search title
-        normalized_search = normalize_string(recipe_title)
+        normalized_search = normalize_string(str(recipe_title))
 
         # Find matching recipe
         recipe = None

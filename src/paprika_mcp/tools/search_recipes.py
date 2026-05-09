@@ -4,7 +4,16 @@ from typing import Any
 
 from mcp.types import TextContent
 
-from ..utils import get_categories, get_remote, search_in_text, translate_category_uids
+from ..utils import get_categories, get_remote, search_in_text
+
+
+def validate_pagination(page: int, page_size: int) -> str | None:
+    """Validate pagination inputs and return an error string if invalid."""
+    if not isinstance(page, int) or page < 1:
+        return "Error: 'page' must be an integer >= 1"
+    if not isinstance(page_size, int) or page_size < 1:
+        return "Error: 'page_size' must be an integer >= 1"
+    return None
 
 
 async def search_recipes_tool(args: dict[str, Any]) -> list[TextContent]:
@@ -17,16 +26,21 @@ async def search_recipes_tool(args: dict[str, Any]) -> list[TextContent]:
     regex = args.get("regex", False)
     category_filter = args.get("category", None)
 
+    pagination_error = validate_pagination(page, page_size)
+    if pagination_error:
+        return [TextContent(type="text", text=pagination_error)]
+
     # Get the remote
     remote = get_remote()
 
     # Fetch all recipes (excluding trashed) and sort alphabetically
-    all_recipes = [r for r in remote.recipes if not r.in_trash]
+    all_recipes = [r for r in list(remote.recipes) if not r.in_trash]
     all_recipes.sort(key=lambda r: r.name.lower())
 
     # Get category mappings for translating UUIDs to names
     categories_data = get_categories(remote.bearer_token)
     category_name_to_uid = categories_data["name_to_uid"]
+    uid_to_name = categories_data["uid_to_name"]
 
     results = []
 
@@ -44,8 +58,9 @@ async def search_recipes_tool(args: dict[str, Any]) -> list[TextContent]:
                 continue
 
         # Translate category UUIDs to names for searching
-        category_names = translate_category_uids(
-            recipe.categories or [], remote.bearer_token
+        category_names = ", ".join(
+            uid_to_name.get(uid, f"Unknown-{uid[:8]}")
+            for uid in (recipe.categories or [])
         )
 
         # Determine which fields to search

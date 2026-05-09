@@ -2,10 +2,12 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Prompt, Tool
+from mcp.types import Prompt, TextContent, Tool
 
 from .prompts import PROMPTS
 from .tools import TOOLS
@@ -23,10 +25,13 @@ async def list_prompts():
 
 
 @app.get_prompt()
-async def get_prompt(name: str, arguments: dict = None):
+async def get_prompt(name: str, arguments: dict[str, Any] | None = None):
     """Get prompt content."""
     if name in PROMPTS:
-        return await PROMPTS[name]["handler"](arguments or {})
+        handler = cast(
+            Callable[[dict[str, Any]], Awaitable[Any]], PROMPTS[name]["handler"]
+        )
+        return await handler(arguments or {})
     raise ValueError(f"Unknown prompt: {name}")
 
 
@@ -37,14 +42,17 @@ async def list_tools():
 
 
 @app.call_tool()
-async def call_tool(name: str, arguments: dict):
+async def call_tool(name: str, arguments: dict[str, Any]):
     """Handle tool calls."""
     if name in TOOLS:
         try:
-            return await TOOLS[name]["handler"](arguments)
+            handler = cast(
+                Callable[[dict[str, Any]], Awaitable[list[TextContent]]],
+                TOOLS[name]["handler"],
+            )
+            return await handler(arguments)
         except Exception as e:
             logger.error(f"Error in {name}: {e}", exc_info=True)
-            from mcp.types import TextContent
 
             return [TextContent(type="text", text=f"Error: {str(e)}")]
     raise ValueError(f"Unknown tool: {name}")

@@ -7,6 +7,27 @@ from mcp.types import TextContent
 
 from ..utils import get_remote
 
+ALLOWED_TEXT_FIELDS = {
+    "name",
+    "ingredients",
+    "directions",
+    "notes",
+    "description",
+    "source",
+    "source_url",
+    "prep_time",
+    "cook_time",
+    "total_time",
+    "servings",
+    "difficulty",
+    "nutritional_info",
+}
+
+
+def is_updateable_text_field(field: str) -> bool:
+    """Return True when a field supports string replacement."""
+    return field in ALLOWED_TEXT_FIELDS
+
 
 async def update_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
     """Update recipe fields using find/replace - DANGEROUS operation."""
@@ -34,6 +55,17 @@ async def update_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
             )
         ]
 
+    if not is_updateable_text_field(field):
+        return [
+            TextContent(
+                type="text",
+                text=(
+                    f"Error: Field '{field}' cannot be updated with find/replace. "
+                    "Only text fields are supported."
+                ),
+            )
+        ]
+
     # Get the current field value
     field_value = getattr(recipe, field, None)
 
@@ -46,6 +78,17 @@ async def update_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
         ]
 
     # Perform the find/replace
+    if not isinstance(field_value, str):
+        return [
+            TextContent(
+                type="text",
+                text=(
+                    f"Error: Field '{field}' on recipe '{recipe.name}' is not text "
+                    "and cannot be updated with find/replace."
+                ),
+            )
+        ]
+
     if use_regex:
         try:
             new_value = re.sub(find, replace, field_value)
@@ -107,7 +150,6 @@ TOOL_DEFINITION = {
                     "directions",
                     "notes",
                     "description",
-                    "categories",
                     "source",
                     "source_url",
                     "prep_time",
@@ -115,7 +157,6 @@ TOOL_DEFINITION = {
                     "total_time",
                     "servings",
                     "difficulty",
-                    "rating",
                     "nutritional_info",
                 ],
                 "description": "Field to update",

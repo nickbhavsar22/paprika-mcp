@@ -128,6 +128,34 @@ Or use environment variables:
 }
 ```
 
+### Recipe Maintenance
+
+The CLI now includes an audit and repair workflow for recipe cleanup. It is conservative by default:
+
+- existing thumbnails are preserved
+- ratings and star ratings are never changed
+- uncertain thumbnail or serving-size cases are flagged for review instead of being forced
+
+Audit recipes and write a report:
+
+```bash
+paprika-mcp audit
+```
+
+Apply only the safe cleanup changes in dry-run mode:
+
+```bash
+paprika-mcp apply
+```
+
+Apply safe cleanup changes and write them back:
+
+```bash
+paprika-mcp apply --apply
+```
+
+The maintenance commands write JSON and Markdown reports under `~/.paprika-mcp/maintenance/` by default and store backups before writeback.
+
 ### Available Tools
 
 #### format_fraction

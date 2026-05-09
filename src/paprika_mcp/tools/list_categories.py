@@ -23,8 +23,8 @@ async def list_categories_tool(args: dict[str, Any]) -> list[TextContent]:
     categories.sort(key=lambda c: c.get("name", "").lower())
 
     # Build hierarchical structure
-    root_categories = []
-    child_categories = {}
+    root_categories: list[dict[str, Any]] = []
+    child_categories: dict[str, list[dict[str, Any]]] = {}
 
     for cat in categories:
         parent_uid = cat.get("parent_uid")
@@ -38,7 +38,7 @@ async def list_categories_tool(args: dict[str, Any]) -> list[TextContent]:
     # Format output
     output_lines = [f"Found {len(categories)} categories:\n"]
 
-    def format_category(cat, indent=0):
+    def format_category(cat: dict[str, Any], indent: int = 0) -> list[str]:
         """Recursively format a category and its children."""
         lines = []
         prefix = "  " * indent

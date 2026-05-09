@@ -1,10 +1,13 @@
 """Utility functions for paprika-mcp server."""
 
+import gzip
 import json
 import logging
 import os
+import re
 import unicodedata
-from typing import Any
+from datetime import date, timedelta
+from typing import Any, cast
 
 import requests
 from paprika_recipes.cache import DirectoryCache
@@ -14,6 +17,12 @@ logger = logging.getLogger(__name__)
 
 # Module-level cache for categories (persists for server lifetime)
 _categories_cache: dict[str, dict[str, str]] | None = None
+
+# Module-level cache for meal types (persists for server lifetime)
+_meal_types_cache: list[dict[str, Any]] | None = None
+
+# Paprika API base URL
+PAPRIKA_API_BASE = "https://www.paprikaapp.com/api/v2/sync"
 
 
 def get_credentials() -> tuple[str, str]:
@@ -77,7 +86,7 @@ def get_user_agent() -> str | None:
         try:
             with open(config_path) as f:
                 config = json.load(f)
-                user_agent = config.get("user_agent")
+                user_agent = cast(str | None, config.get("user_agent"))
                 if user_agent:
                     return user_agent
         except (OSError, json.JSONDecodeError) as e:
@@ -272,3 +281,179 @@ def search_in_text(
                 )
 
     return matches
+
+
+# --- Meal utilities ---
+
+
+def get_meal_types(bearer_token: str) -> list[dict[str, Any]]:
+    """Get meal types from Paprika API with caching.
+
+    Returns a list of meal type dicts with keys:
+    uid, name, order_flag, color, export_all_day, export_time, original_type.
+
+    Results are cached for the lifetime of the server process.
+    """
+    global _meal_types_cache
+
+    if _meal_types_cache is not None:
+        return _meal_types_cache
+
+    headers = {"Authorization": f"Bearer {bearer_token}"}
+    try:
+        resp = requests.get(
+            f"{PAPRIKA_API_BASE}/mealtypes/",
+            headers=headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        _meal_types_cache = resp.json().get("result", [])
+        return _meal_types_cache
+    except requests.RequestException as e:
+        logger.warning(f"Failed to fetch meal types: {e}")
+        return []
+
+
+def meal_type_int_to_name(type_int: int, bearer_token: str) -> str:
+    """Convert a meal type integer to its display name.
+
+    Falls back to 'Type {n}' if the type is not found.
+    """
+    meal_types = get_meal_types(bearer_token)
+    for mt in meal_types:
+        if mt.get("original_type") == type_int:
+            return mt["name"]
+    return f"Type {type_int}"
+
+
+def meal_type_name_to_int(name: str, bearer_token: str) -> int | None:
+    """Convert a meal type name to its integer value.
+
+    Returns None if the name is not recognized.
+    """
+    meal_types = get_meal_types(bearer_token)
+    name_lower = name.lower()
+    for mt in meal_types:
+        if mt.get("name", "").lower() == name_lower:
+            return mt["original_type"]
+    return None
+
+
+def meal_type_to_uid(type_int: int, bearer_token: str) -> str:
+    """Get the type_uid for a meal type integer."""
+    meal_types = get_meal_types(bearer_token)
+    for mt in meal_types:
+        if mt.get("original_type") == type_int:
+            return mt["uid"]
+    return ""
+
+
+def get_meals(bearer_token: str) -> list[dict[str, Any]]:
+    """Fetch all non-deleted meals from Paprika API.
+
+    Returns a list of meal dicts sorted by date, then type, then order_flag.
+    """
+    headers = {"Authorization": f"Bearer {bearer_token}"}
+    try:
+        resp = requests.get(
+            f"{PAPRIKA_API_BASE}/meals/",
+            headers=headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        meals = resp.json().get("result", [])
+        # Sort by date, then type, then order_flag
+        meals.sort(
+            key=lambda m: (
+                m.get("date", ""),
+                m.get("type", 0),
+                m.get("order_flag", 0),
+            )
+        )
+        return meals
+    except requests.RequestException as e:
+        logger.warning(f"Failed to fetch meals: {e}")
+        return []
+
+
+def save_meal(bearer_token: str, meal_data: dict[str, Any]) -> dict[str, Any]:
+    """Create or update a meal via the Paprika API.
+
+    The API expects a gzip-compressed JSON list posted as multipart form-data.
+
+    Returns dict with 'success' bool and optional 'error' message.
+    """
+    headers = {"Authorization": f"Bearer {bearer_token}"}
+    try:
+        compressed = gzip.compress(json.dumps([meal_data]).encode("utf-8"))
+        resp = requests.post(
+            f"{PAPRIKA_API_BASE}/meals/",
+            headers=headers,
+            files={"data": compressed},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        if "error" in result:
+            return {"success": False, "error": result["error"].get("message", "Unknown error")}
+        return {"success": True}
+    except requests.RequestException as e:
+        return {"success": False, "error": str(e)}
+
+
+def resolve_date(date_str: str) -> str:
+    """Resolve a flexible date string to YYYY-MM-DD format.
+
+    Supports:
+        - YYYY-MM-DD (passthrough)
+        - 'today', 'tomorrow', 'yesterday'
+        - Day names: 'monday' through 'sunday' (next occurrence including today)
+        - 'next monday' through 'next sunday' (always at least 1 day ahead)
+
+    Raises:
+        ValueError: If the date string cannot be parsed.
+    """
+    s = date_str.strip().lower()
+
+    # Check YYYY-MM-DD format
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        return s
+
+    today = date.today()
+
+    if s == "today":
+        return today.isoformat()
+    if s == "tomorrow":
+        return (today + timedelta(days=1)).isoformat()
+    if s == "yesterday":
+        return (today - timedelta(days=1)).isoformat()
+
+    day_names = [
+        "monday", "tuesday", "wednesday", "thursday",
+        "friday", "saturday", "sunday",
+    ]
+
+    # "next monday" etc. - always at least 1 day in the future
+    next_match = re.match(r"^next\s+(\w+)$", s)
+    if next_match:
+        day_name = next_match.group(1)
+        if day_name in day_names:
+            target = day_names.index(day_name)
+            current = today.weekday()
+            days_ahead = (target - current) % 7
+            if days_ahead == 0:
+                days_ahead = 7
+            return (today + timedelta(days=days_ahead)).isoformat()
+
+    # Plain day name - next occurrence including today
+    if s in day_names:
+        target = day_names.index(s)
+        current = today.weekday()
+        days_ahead = (target - current) % 7
+        return (today + timedelta(days=days_ahead)).isoformat()
+
+    raise ValueError(
+        f"Cannot parse date '{date_str}'. "
+        "Use YYYY-MM-DD, 'today', 'tomorrow', 'yesterday', "
+        "a day name like 'monday', or 'next monday'."
+    )

@@ -1,4 +1,4 @@
-"""CLI utilities for paprika-mcp."""
+"""CLI entry point for paprika-mcp."""
 
 import json
 import os
@@ -54,6 +54,10 @@ def main():
     """Main CLI entry point."""
     if len(sys.argv) > 1 and sys.argv[1] == "setup":
         setup_credentials()
+    elif len(sys.argv) > 1 and sys.argv[1] in {"audit", "apply"}:
+        from .maintenance import main as maintenance_main
+
+        sys.exit(maintenance_main(sys.argv[1:]))
     else:
         # Start the server
         from paprika_mcp.server import run
