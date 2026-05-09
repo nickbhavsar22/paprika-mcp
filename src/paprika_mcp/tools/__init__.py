@@ -2,6 +2,8 @@
 
 from .add_meal import TOOL_DEFINITION as ADD_MEAL_DEF
 from .add_meal import add_meal_tool
+from .create_recipe import TOOL_DEFINITION as CREATE_RECIPE_DEF
+from .create_recipe import create_recipe_tool
 from .delete_meal import TOOL_DEFINITION as DELETE_MEAL_DEF
 from .delete_meal import delete_meal_tool
 from .format_fraction import TOOL_DEFINITION as FORMAT_FRACTION_DEF
@@ -14,6 +16,8 @@ from .read_recipe import TOOL_DEFINITION as READ_RECIPE_DEF
 from .read_recipe import read_recipe_tool
 from .search_recipes import TOOL_DEFINITION as SEARCH_RECIPES_DEF
 from .search_recipes import search_recipes_tool
+from .set_recipe_photo import TOOL_DEFINITION as SET_RECIPE_PHOTO_DEF
+from .set_recipe_photo import set_recipe_photo_tool
 from .update_meal import TOOL_DEFINITION as UPDATE_MEAL_DEF
 from .update_meal import update_meal_tool
 from .update_recipe import TOOL_DEFINITION as UPDATE_RECIPE_DEF
@@ -21,9 +25,17 @@ from .update_recipe import update_recipe_tool
 
 # Export all tools and their definitions
 TOOLS = {
+    "create_recipe": {
+        "definition": CREATE_RECIPE_DEF,
+        "handler": create_recipe_tool,
+    },
     "search_recipes": {
         "definition": SEARCH_RECIPES_DEF,
         "handler": search_recipes_tool,
+    },
+    "set_recipe_photo": {
+        "definition": SET_RECIPE_PHOTO_DEF,
+        "handler": set_recipe_photo_tool,
     },
     "read_recipe": {
         "definition": READ_RECIPE_DEF,
@@ -61,13 +73,15 @@ TOOLS = {
 
 __all__ = [
     "TOOLS",
-    "search_recipes_tool",
-    "read_recipe_tool",
-    "update_recipe_tool",
-    "list_categories_tool",
-    "format_fraction_tool",
-    "list_meals_tool",
     "add_meal_tool",
-    "update_meal_tool",
+    "create_recipe_tool",
     "delete_meal_tool",
+    "format_fraction_tool",
+    "list_categories_tool",
+    "list_meals_tool",
+    "read_recipe_tool",
+    "search_recipes_tool",
+    "set_recipe_photo_tool",
+    "update_meal_tool",
+    "update_recipe_tool",
 ]
