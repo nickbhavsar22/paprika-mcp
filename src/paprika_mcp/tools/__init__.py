@@ -22,6 +22,12 @@ from .list_categories import TOOL_DEFINITION as LIST_CATEGORIES_DEF
 from .list_categories import list_categories_tool
 from .list_groceries import TOOL_DEFINITION as LIST_GROCERIES_DEF
 from .list_groceries import list_groceries_tool
+from .list_grocery_aisles import TOOL_DEFINITION as LIST_GROCERY_AISLES_DEF
+from .list_grocery_aisles import list_grocery_aisles_tool
+from .list_grocery_lists import TOOL_DEFINITION as LIST_GROCERY_LISTS_DEF
+from .list_grocery_lists import list_grocery_lists_tool
+from .list_meal_types import TOOL_DEFINITION as LIST_MEAL_TYPES_DEF
+from .list_meal_types import list_meal_types_tool
 from .list_meals import TOOL_DEFINITION as LIST_MEALS_DEF
 from .list_meals import list_meals_tool
 from .read_recipe import TOOL_DEFINITION as READ_RECIPE_DEF
@@ -105,6 +111,18 @@ TOOLS = {
         "definition": LIST_GROCERIES_DEF,
         "handler": list_groceries_tool,
     },
+    "list_grocery_lists": {
+        "definition": LIST_GROCERY_LISTS_DEF,
+        "handler": list_grocery_lists_tool,
+    },
+    "list_grocery_aisles": {
+        "definition": LIST_GROCERY_AISLES_DEF,
+        "handler": list_grocery_aisles_tool,
+    },
+    "list_meal_types": {
+        "definition": LIST_MEAL_TYPES_DEF,
+        "handler": list_meal_types_tool,
+    },
     "add_grocery": {
         "definition": ADD_GROCERY_DEF,
         "handler": add_grocery_tool,
@@ -132,6 +150,9 @@ __all__ = [
     "format_fraction_tool",
     "list_categories_tool",
     "list_groceries_tool",
+    "list_grocery_aisles_tool",
+    "list_grocery_lists_tool",
+    "list_meal_types_tool",
     "list_meals_tool",
     "read_recipe_tool",
     "search_recipes_tool",
