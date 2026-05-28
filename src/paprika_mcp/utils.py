@@ -617,3 +617,40 @@ def save_grocery(
         return {"success": True}
     except requests.RequestException as e:
         return {"success": False, "error": str(e)}
+
+
+# --- Category utilities ---
+
+
+def save_category(
+    bearer_token: str, cat_data: dict[str, Any]
+) -> dict[str, Any]:
+    """Create, update, or delete a category via the Paprika API.
+
+    The API expects a gzip-compressed JSON list posted as multipart form-data.
+    Invalidates the category cache on success.
+
+    Returns dict with 'success' bool and optional 'error' message.
+    """
+    global _categories_cache
+
+    headers = {"Authorization": f"Bearer {bearer_token}"}
+    try:
+        compressed = gzip.compress(json.dumps([cat_data]).encode("utf-8"))
+        resp = requests.post(
+            f"{PAPRIKA_API_BASE}/categories/",
+            headers=headers,
+            files={"data": compressed},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        if "error" in result:
+            return {
+                "success": False,
+                "error": result["error"].get("message", "Unknown error"),
+            }
+        _categories_cache = None
+        return {"success": True}
+    except requests.RequestException as e:
+        return {"success": False, "error": str(e)}
