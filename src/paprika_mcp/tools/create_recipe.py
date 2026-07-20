@@ -5,6 +5,7 @@ from typing import Any
 from mcp.types import TextContent
 from paprika_recipes.remote import RemoteRecipe
 
+from ..photo import attach_photo_bytes, normalize_to_jpeg, resolve_image_bytes
 from ..utils import get_categories, get_remote
 
 
@@ -50,7 +51,7 @@ async def create_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
     )
 
     try:
-        remote.upload_recipe(recipe)
+        created = remote.upload_recipe(recipe)
     except Exception as e:
         return [
             TextContent(
@@ -58,6 +59,22 @@ async def create_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
                 text=f"Error creating recipe: {e}",
             )
         ]
+
+    # Optionally attach a thumbnail in the same call. A photo failure does not
+    # undo the created recipe — report it and continue.
+    photo_status = None
+    if args.get("upload_code") or args.get("image_url"):
+        try:
+            raw, source_label = resolve_image_bytes(args)
+            jpeg_bytes = normalize_to_jpeg(raw)
+            attach_photo_bytes(remote, created, jpeg_bytes, source_label)
+            photo_status = f"**Thumbnail:** attached (source: {source_label})"
+        except ImportError:
+            photo_status = (
+                "**Thumbnail:** skipped — Pillow is not installed on the server."
+            )
+        except Exception as e:
+            photo_status = f"**Thumbnail:** failed to attach: {e}"
 
     # Build response
     lines = [
@@ -75,9 +92,12 @@ async def create_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
         lines.append(
             f"\nWarning: Unrecognized categories (skipped): {', '.join(unresolved)}"
         )
-    lines.append(
-        "\nUse `set_recipe_photo` with the Recipe ID above to add a thumbnail image."
-    )
+    if photo_status:
+        lines.append(f"\n{photo_status}")
+    else:
+        lines.append(
+            "\nUse `set_recipe_photo` with the Recipe ID above to add a thumbnail image."
+        )
 
     return [TextContent(type="text", text="\n".join(lines))]
 
@@ -90,7 +110,8 @@ TOOL_DEFINITION = {
         "Only 'name' is required; all other fields are optional. "
         "Categories should be provided as an array of category names "
         "(use list_categories to see available categories). "
-        "After creating, use set_recipe_photo to attach a thumbnail image."
+        "Optionally attach a thumbnail in the same call with `upload_code` (from the "
+        "/upload page) or `image_url`; otherwise use set_recipe_photo afterward."
     ),
     "inputSchema": {
         "type": "object",
@@ -168,6 +189,20 @@ TOOL_DEFINITION = {
                 "type": "boolean",
                 "description": "Whether to add the recipe to favorites (default: false).",
                 "default": False,
+            },
+            "upload_code": {
+                "type": "string",
+                "description": (
+                    "Optional. Short code from the /upload page to attach a photo "
+                    "(e.g. one taken on a phone) as the thumbnail in this same call."
+                ),
+            },
+            "image_url": {
+                "type": "string",
+                "description": (
+                    "Optional. Public image URL to attach as the thumbnail in this "
+                    "same call."
+                ),
             },
         },
         "required": ["name"],
