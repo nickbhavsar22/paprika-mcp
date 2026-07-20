@@ -90,9 +90,11 @@ async def set_recipe_photo_tool(args: dict[str, Any]) -> list[TextContent]:
 TOOL_DEFINITION = {
     "name": "set_recipe_photo",
     "description": (
-        "Attach a thumbnail image to a recipe. Provide either `upload_code` (a code "
-        "from the /upload page — how to attach a photo taken on a phone) or "
-        "`image_url` (a public image URL). The image is normalized to JPEG "
+        "Attach a thumbnail image to a recipe. For a photo from the user's phone or "
+        "computer, first give them the upload link (get_photo_upload_link); after "
+        "they upload, call this with just the recipe `id` and NO code — the most "
+        "recent upload is attached automatically. You can also pass an explicit "
+        "`upload_code` or a public `image_url`. The image is normalized to JPEG "
         "(max 1200px, q85) and uploaded to Paprika. "
         "DANGEROUS: requires user confirmation."
     ),

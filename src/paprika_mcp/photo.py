@@ -127,11 +127,30 @@ def pop_staged(code: str) -> bytes:
     return entry[1]
 
 
+def pop_latest() -> tuple[str, bytes]:
+    """Return and remove the most recently staged photo. Raises KeyError if none.
+
+    Lets the user attach a just-uploaded photo without copying its code back —
+    they upload, then say "attach it". All entries share the same TTL, so the
+    greatest expiry is the newest upload.
+    """
+    now = time.time()
+    _prune(now)
+    if not _staged:
+        raise KeyError("no staged uploads")
+    code = max(_staged, key=lambda c: _staged[c][0])
+    return code, _staged.pop(code)[1]
+
+
 def resolve_image_bytes(args: dict[str, Any]) -> tuple[bytes, str]:
     """Acquire source image bytes from whichever input was provided.
 
     Returns (raw_bytes, source_label). Callers normalize the bytes to JPEG.
-    Accepts `upload_code` (browser-staged photo) or `image_url` (public URL).
+    Resolution order:
+      1. `upload_code` — a specific browser-staged photo.
+      2. `image_url` — a public image URL.
+      3. Neither given — the most recently staged upload (the common "I just
+         uploaded a photo, attach it" case, so no code needs copying back).
     """
     upload_code = args.get("upload_code")
     image_url = args.get("image_url")
@@ -149,7 +168,14 @@ def resolve_image_bytes(args: dict[str, Any]) -> tuple[bytes, str]:
     if image_url:
         return _download_image(image_url), image_url
 
-    raise ValueError("Provide either 'upload_code' or 'image_url'.")
+    try:
+        code, data = pop_latest()
+        return data, f"upload:{code}"
+    except KeyError:
+        raise ValueError(
+            "No photo to attach. Upload one at the /upload URL first (ask for the "
+            "upload link), or pass an 'image_url'."
+        ) from None
 
 
 def attach_photo_bytes(remote, recipe, jpeg_bytes: bytes, source_label: str) -> dict:

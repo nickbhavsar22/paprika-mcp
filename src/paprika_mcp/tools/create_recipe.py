@@ -63,7 +63,7 @@ async def create_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
     # Optionally attach a thumbnail in the same call. A photo failure does not
     # undo the created recipe — report it and continue.
     photo_status = None
-    if args.get("upload_code") or args.get("image_url"):
+    if args.get("upload_code") or args.get("image_url") or args.get("attach_photo"):
         try:
             raw, source_label = resolve_image_bytes(args)
             jpeg_bytes = normalize_to_jpeg(raw)
@@ -110,8 +110,10 @@ TOOL_DEFINITION = {
         "Only 'name' is required; all other fields are optional. "
         "Categories should be provided as an array of category names "
         "(use list_categories to see available categories). "
-        "Optionally attach a thumbnail in the same call with `upload_code` (from the "
-        "/upload page) or `image_url`; otherwise use set_recipe_photo afterward."
+        "Optionally attach a thumbnail in the same call: pass `image_url`, or for a "
+        "photo from the user's device give them the upload link "
+        "(get_photo_upload_link) first, then pass `upload_code` (or omit it to use "
+        "their most recent upload). Otherwise use set_recipe_photo afterward."
     ),
     "inputSchema": {
         "type": "object",
@@ -190,10 +192,18 @@ TOOL_DEFINITION = {
                 "description": "Whether to add the recipe to favorites (default: false).",
                 "default": False,
             },
+            "attach_photo": {
+                "type": "boolean",
+                "description": (
+                    "Optional. Set true to attach the user's most recent browser "
+                    "upload as the thumbnail (after they used the upload link). No "
+                    "code needed."
+                ),
+            },
             "upload_code": {
                 "type": "string",
                 "description": (
-                    "Optional. Short code from the /upload page to attach a photo "
+                    "Optional. Specific code from the /upload page to attach a photo "
                     "(e.g. one taken on a phone) as the thumbnail in this same call."
                 ),
             },
