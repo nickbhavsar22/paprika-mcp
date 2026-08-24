@@ -322,8 +322,14 @@ def _extract_meta_content(html_text: str, names: tuple[str, ...]) -> str | None:
 
 
 def _extract_link_image(html_text: str) -> str | None:
+    """Find a <link rel="image_src"> preview image.
+
+    Deliberately does NOT match rel="icon": a favicon is a site logo, not a
+    picture of the food, and pages lacking an og:image would otherwise donate
+    a 16x16 or 32x32 icon as the recipe's thumbnail.
+    """
     match = re.search(
-        r'<link[^>]+rel=["\'](?:image_src|icon)["\'][^>]+href=["\']([^"\']+)["\']',
+        r'<link[^>]+rel=["\']image_src["\'][^>]+href=["\']([^"\']+)["\']',
         html_text,
         re.IGNORECASE,
     )
@@ -332,8 +338,71 @@ def _extract_link_image(html_text: str) -> str | None:
     return None
 
 
+# Filenames that are site furniture rather than a photo of the dish.
+LOW_VALUE_IMAGE_RE = re.compile(
+    r"(favicon|apple-touch-icon|android-chrome|mstile|site[-_]?logo|"
+    r"logo[-_.]|[-_]logo|sprite|placeholder|avatar|gravatar|"
+    r"[-_]\d{1,2}x\d{1,2}\.)",
+    re.IGNORECASE,
+)
+# An explicit WxH in the filename, e.g. "cropped-Logo-32x32.png".
+DIMENSION_HINT_RE = re.compile(r"[-_](\d{2,4})x(\d{2,4})\.[a-z]{3,4}(?:$|[?#])", re.I)
+MIN_THUMBNAIL_DIMENSION = 200
+
+
+def looks_like_photo(url: str | None) -> bool:
+    """Cheap URL-only check that a candidate is a real photo, not site chrome.
+
+    Costs no network request. `verify_image_dimensions` does the authoritative
+    check by actually measuring the image.
+    """
+    if not url:
+        return False
+    path = urlparse(url).path
+    if LOW_VALUE_IMAGE_RE.search(path):
+        return False
+    hint = DIMENSION_HINT_RE.search(path)
+    if hint:
+        width, height = int(hint.group(1)), int(hint.group(2))
+        if max(width, height) < MIN_THUMBNAIL_DIMENSION:
+            return False
+    if path.lower().endswith(".svg"):
+        return False  # vector art is a logo, never a food photo
+    return True
+
+
+def verify_image_dimensions(
+    url: str, min_dimension: int = MIN_THUMBNAIL_DIMENSION
+) -> bool:
+    """Download the image and confirm it is large enough to be a thumbnail.
+
+    Returns False on any failure, so an unreachable or unreadable image is
+    never proposed. Requires Pillow; if absent, falls back to the URL check.
+    """
+    if not looks_like_photo(url):
+        return False
+    try:
+        import io
+
+        from PIL import Image
+
+        response = requests.get(url, headers=HTTP_HEADERS, timeout=15, stream=True)
+        response.raise_for_status()
+        data = response.raw.read(200_000, decode_content=True)
+        with Image.open(io.BytesIO(data)) as img:
+            return max(img.size) >= min_dimension
+    except ImportError:
+        return True  # already passed the URL heuristic
+    except Exception:
+        return False
+
+
 def source_thumbnail(source_url: str | None) -> str | None:
-    """Try to find an image from the recipe source page."""
+    """Try to find an image from the recipe source page.
+
+    Candidates that look like site chrome (favicons, logos) are rejected —
+    attaching one produces a recipe thumbnail showing the website's logo.
+    """
     if not source_url:
         return None
 
@@ -343,11 +412,15 @@ def source_thumbnail(source_url: str | None) -> str | None:
 
     candidate = _extract_meta_content(html_text, ("og:image", "twitter:image"))
     if candidate:
-        return urljoin(source_url, candidate)
+        resolved = urljoin(source_url, candidate)
+        if looks_like_photo(resolved):
+            return resolved
 
     candidate = _extract_link_image(html_text)
     if candidate:
-        return urljoin(source_url, candidate)
+        resolved = urljoin(source_url, candidate)
+        if looks_like_photo(resolved):
+            return resolved
 
     return None
 

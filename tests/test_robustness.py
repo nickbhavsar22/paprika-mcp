@@ -16,7 +16,11 @@ from paprika_recipes.remote import RemoteRecipe
 
 from paprika_mcp import photo, utils
 from paprika_mcp.recipe_maintenance import (
+    _extract_link_image,
     candidate_thumbnail,
+    looks_like_photo,
+    source_thumbnail,
+    verify_image_dimensions,
     web_image_search,
     web_image_search_detailed,
 )
@@ -282,6 +286,99 @@ class WebImageSearchTests(unittest.TestCase):
                 side_effect=requests.Timeout(),
             ):
                 self.assertIsNone(web_image_search("lasagna"))
+
+
+class SiteChromeRejectionTests(unittest.TestCase):
+    """A page's favicon or logo must never become a recipe thumbnail.
+
+    Regression: a real recipe (Chicken Tandoori) picked up
+    'cropped-KITCHENMAILogo-...-32x32.png' from its source page's
+    <link rel="icon"> and reported it as a 0.90-confidence candidate.
+    """
+
+    def test_rejects_site_chrome(self):
+        rejected = [
+            "https://kitchenmai.com/wp-content/uploads/2018/12/"
+            "cropped-KITCHENMAILogo-e1545311302616-3-32x32.png",
+            "https://site.com/favicon.ico",
+            "https://site.com/apple-touch-icon.png",
+            "https://site.com/android-chrome-192x192.png",
+            "https://site.com/assets/site-logo.png",
+            "https://site.com/brand.svg",
+            "https://site.com/img/thumb-16x16.png",
+            "https://site.com/sprite.png",
+        ]
+        for url in rejected:
+            with self.subTest(url=url):
+                self.assertFalse(looks_like_photo(url))
+
+    def test_accepts_real_photos(self):
+        accepted = [
+            "https://www.onceuponachef.com/images/2012/09/Chicken-Kabobs-1200x1480.jpg",
+            "https://feelgoodfoodie.net/wp-content/uploads/2023/04/Hummus-11.jpg",
+            "https://images.pexels.com/photos/14286683/pexels-photo.jpeg?auto=compress&w=940",
+        ]
+        for url in accepted:
+            with self.subTest(url=url):
+                self.assertTrue(looks_like_photo(url))
+
+    def test_none_and_empty_are_rejected(self):
+        self.assertFalse(looks_like_photo(None))
+        self.assertFalse(looks_like_photo(""))
+
+    def test_link_rel_icon_is_not_extracted(self):
+        html_text = '<link rel="icon" href="/favicon-32x32.png">'
+        self.assertIsNone(_extract_link_image(html_text))
+
+    def test_link_rel_image_src_is_still_extracted(self):
+        html_text = '<link rel="image_src" href="/photos/dish.jpg">'
+        self.assertEqual(_extract_link_image(html_text), "/photos/dish.jpg")
+
+    def test_source_thumbnail_drops_a_favicon_og_image(self):
+        page = '<meta property="og:image" content="https://s.com/favicon.ico">'
+        with patch("paprika_mcp.recipe_maintenance._fetch_html", return_value=page):
+            self.assertIsNone(source_thumbnail("https://s.com/recipe"))
+
+    def test_source_thumbnail_keeps_a_real_og_image(self):
+        page = '<meta property="og:image" content="https://s.com/dish-1200x800.jpg">'
+        with patch("paprika_mcp.recipe_maintenance._fetch_html", return_value=page):
+            self.assertEqual(
+                source_thumbnail("https://s.com/recipe"),
+                "https://s.com/dish-1200x800.jpg",
+            )
+
+    def test_verify_rejects_an_image_that_is_too_small(self):
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.new("RGB", (32, 32), "blue").save(buf, format="PNG")
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.raw.read.return_value = buf.getvalue()
+        with patch(
+            "paprika_mcp.recipe_maintenance.requests.get", return_value=response
+        ):
+            self.assertFalse(verify_image_dimensions("https://s.com/photo.jpg"))
+
+    def test_verify_accepts_a_large_image(self):
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.new("RGB", (800, 600), "green").save(buf, format="JPEG")
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.raw.read.return_value = buf.getvalue()
+        with patch(
+            "paprika_mcp.recipe_maintenance.requests.get", return_value=response
+        ):
+            self.assertTrue(verify_image_dimensions("https://s.com/photo.jpg"))
+
+    def test_verify_rejects_on_network_failure(self):
+        with patch(
+            "paprika_mcp.recipe_maintenance.requests.get",
+            side_effect=requests.Timeout(),
+        ):
+            self.assertFalse(verify_image_dimensions("https://s.com/photo.jpg"))
 
 
 class ThumbnailPriorityTests(unittest.TestCase):

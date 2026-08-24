@@ -11,7 +11,7 @@ from typing import Any
 
 from mcp.types import TextContent
 
-from ..recipe_maintenance import candidate_thumbnail
+from ..recipe_maintenance import candidate_thumbnail, verify_image_dimensions
 from ..utils import find_recipe_by_id, get_remote, normalize_string
 
 # Below this, a candidate is a weak generic match rather than a photo of the
@@ -56,6 +56,16 @@ async def find_free_thumbnail_tool(args: dict[str, Any]) -> list[TextContent]:
             ]
 
     candidate = candidate_thumbnail(recipe)
+
+    # Measure the image before recommending it. A source page can advertise a
+    # tiny logo as its preview image, which would become the recipe thumbnail.
+    # If the page's own image fails, retry without that tier so we still fall
+    # through to a stock photo rather than returning nothing.
+    if candidate and candidate.source == "source_page":
+        if not verify_image_dimensions(candidate.url):
+            candidate = candidate_thumbnail(
+                recipe, fetch_source_image=lambda _url: None
+            )
 
     if candidate is None:
         return [
