@@ -353,33 +353,41 @@ def source_thumbnail(source_url: str | None) -> str | None:
 
 
 def web_image_search(query: str) -> str | None:
-    """Find a photo of the dish with Google Programmable Search (image mode).
+    """Find a stock photo of the dish via the Pexels API.
 
-    Optional and free-tier friendly: returns None when the API key / engine id
-    aren't configured (GOOGLE_IMAGE_SEARCH_KEY, GOOGLE_IMAGE_SEARCH_CX), so the
-    thumbnail chain simply falls through to the next source. Never raises.
+    Optional: returns None when PEXELS_API_KEY isn't set, so the thumbnail
+    chain simply falls through to the next source. Never raises.
+
+    Pexels is used rather than Google Programmable Search because Google closed
+    the Custom Search JSON API to new customers, removed whole-web search for
+    new engines (Jan 20, 2026), and retires the API on Jan 1, 2027.
+
+    Returns only the image URL. `web_image_search_detailed` also returns the
+    photographer credit, which Pexels asks callers to display where they can.
     """
-    api_key = os.environ.get("GOOGLE_IMAGE_SEARCH_KEY")
-    engine_id = os.environ.get("GOOGLE_IMAGE_SEARCH_CX")
+    result = web_image_search_detailed(query)
+    return result["url"] if result else None
+
+
+def web_image_search_detailed(query: str) -> dict[str, str] | None:
+    """Search Pexels and return the image URL plus its attribution.
+
+    Returns a dict with 'url', 'photographer', and 'source_page', or None.
+    """
+    api_key = os.environ.get("PEXELS_API_KEY")
     safe_query = query.strip()
-    if not (api_key and engine_id and safe_query):
+    if not (api_key and safe_query):
         return None
 
-    params = {
-        "key": api_key,
-        "cx": engine_id,
-        "q": f"{safe_query} recipe food photo",
-        "searchType": "image",
-        "num": 1,
-        "safe": "active",
-        "imgSize": "large",
-        "imgType": "photo",
-    }
     try:
         response = requests.get(
-            "https://www.googleapis.com/customsearch/v1",
-            params=params,
-            headers=HTTP_HEADERS,
+            "https://api.pexels.com/v1/search",
+            params={
+                "query": f"{safe_query} food",
+                "per_page": 1,
+                "orientation": "landscape",
+            },
+            headers={**HTTP_HEADERS, "Authorization": api_key},
             timeout=15,
         )
         response.raise_for_status()
@@ -387,10 +395,23 @@ def web_image_search(query: str) -> str | None:
     except (requests.RequestException, ValueError):
         return None
 
-    for item in data.get("items", []):
-        link = item.get("link")
-        if link:
-            return cast(str, link)
+    for photo in data.get("photos", []):
+        src = photo.get("src") or {}
+        # Prefer a size close to our 1200px cap; fall back through the rest.
+        url = next(
+            (
+                src[key]
+                for key in ("large", "large2x", "medium", "original")
+                if src.get(key)
+            ),
+            None,
+        )
+        if url:
+            return {
+                "url": cast(str, url),
+                "photographer": photo.get("photographer") or "",
+                "source_page": photo.get("url") or "",
+            }
     return None
 
 
@@ -499,16 +520,16 @@ def candidate_thumbnail(
 
     query = _search_query_for(recipe)
 
-    # Broad web image search. Sits below the recipe's own source page and linked
+    # Stock photo search. Sits below the recipe's own source page and linked
     # video (which are specific to this recipe) but above Wikimedia, which has
     # thin coverage for anything but well-known dishes.
     web_image = fetch_web_image(query)
     if web_image:
         return ThumbnailCandidate(
             url=web_image,
-            source="web_search",
+            source="stock_photo",
             confidence=0.75,
-            notes="Photo of the dish found via web image search",
+            notes="Stock food photo from Pexels (generic, not this exact recipe)",
         )
 
     wikimedia_image = fetch_wikimedia_image(query)

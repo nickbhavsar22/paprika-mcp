@@ -1,10 +1,10 @@
 """Find a free thumbnail for a recipe - no image generation, no API spend.
 
 This is the first tier of the thumbnail chain. It reuses the discovery pipeline
-from `recipe_maintenance` (source page og:image, linked YouTube video, web image
-search, Wikimedia Commons) and reports the best candidate it finds. Nothing is
-attached here — the caller decides whether the candidate is good enough and then
-calls `set_recipe_photo`.
+from `recipe_maintenance` (source page og:image, linked YouTube video, Pexels
+stock photo, Wikimedia Commons) and reports the best candidate it finds. Nothing
+is attached here — the caller decides whether the candidate is good enough and
+then calls `set_recipe_photo`.
 """
 
 from typing import Any
@@ -63,9 +63,9 @@ async def find_free_thumbnail_tool(args: dict[str, Any]) -> list[TextContent]:
                 type="text",
                 text=(
                     f"No free thumbnail found for '{recipe.name}'.\n\n"
-                    "Nothing usable on the recipe's source page, linked video, web "
-                    "image search, or Wikimedia Commons. Next step: generate an "
-                    "image (see the `set_recipe_thumbnail` prompt for the chain)."
+                    "Nothing usable on the recipe's source page, linked video, "
+                    "Pexels, or Wikimedia Commons. Next step: generate an image "
+                    "(see the `set_recipe_thumbnail` prompt for the chain)."
                 ),
             )
         ]
@@ -112,7 +112,7 @@ TOOL_DEFINITION = {
     "description": (
         "Find an existing, free image to use as a recipe's thumbnail — ALWAYS try "
         "this before generating one, since generation costs money. Searches the "
-        "recipe's own source page, any linked YouTube video, a web image search, "
+        "recipe's own source page, any linked YouTube video, Pexels stock photos, "
         "and Wikimedia Commons, and returns the best candidate URL with a "
         "confidence score. It does NOT attach anything: pass the returned URL to "
         "`set_recipe_photo` if it looks right. If nothing is found, fall back to "

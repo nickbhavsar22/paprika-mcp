@@ -15,7 +15,11 @@ import requests
 from paprika_recipes.remote import RemoteRecipe
 
 from paprika_mcp import photo, utils
-from paprika_mcp.recipe_maintenance import candidate_thumbnail, web_image_search
+from paprika_mcp.recipe_maintenance import (
+    candidate_thumbnail,
+    web_image_search,
+    web_image_search_detailed,
+)
 from paprika_mcp.tools.update_grocery import _as_bool
 
 
@@ -202,28 +206,77 @@ class ImageBase64Tests(unittest.TestCase):
 
 
 class WebImageSearchTests(unittest.TestCase):
-    """The search tier is optional and must never break the chain."""
+    """The Pexels tier is optional and must never break the chain."""
+
+    @staticmethod
+    def _pexels_response(**src):
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "photos": [
+                {
+                    "src": src or {"large": "https://img/x.jpg"},
+                    "photographer": "Ada Cook",
+                    "url": "https://pexels.com/photo/1",
+                }
+            ]
+        }
+        return response
 
     def test_returns_none_when_not_configured(self):
         with patch.dict("os.environ", {}, clear=False):
-            os.environ.pop("GOOGLE_IMAGE_SEARCH_KEY", None)
-            os.environ.pop("GOOGLE_IMAGE_SEARCH_CX", None)
+            os.environ.pop("PEXELS_API_KEY", None)
             self.assertIsNone(web_image_search("lasagna"))
 
-    def test_returns_first_image_link_when_configured(self):
-        response = MagicMock()
-        response.raise_for_status.return_value = None
-        response.json.return_value = {"items": [{"link": "https://img/x.jpg"}]}
-        env = {"GOOGLE_IMAGE_SEARCH_KEY": "k", "GOOGLE_IMAGE_SEARCH_CX": "c"}
-        with patch.dict("os.environ", env):
+    def test_returns_image_url_when_configured(self):
+        with patch.dict("os.environ", {"PEXELS_API_KEY": "k"}):
             with patch(
-                "paprika_mcp.recipe_maintenance.requests.get", return_value=response
+                "paprika_mcp.recipe_maintenance.requests.get",
+                return_value=self._pexels_response(),
             ):
                 self.assertEqual(web_image_search("lasagna"), "https://img/x.jpg")
 
+    def test_sends_the_key_as_an_authorization_header(self):
+        with patch.dict("os.environ", {"PEXELS_API_KEY": "secret-key"}):
+            with patch(
+                "paprika_mcp.recipe_maintenance.requests.get",
+                return_value=self._pexels_response(),
+            ) as get:
+                web_image_search("lasagna")
+        headers = get.call_args.kwargs["headers"]
+        self.assertEqual(headers["Authorization"], "secret-key")
+
+    def test_falls_back_through_available_image_sizes(self):
+        # 'large' missing: should still find a usable size rather than give up.
+        with patch.dict("os.environ", {"PEXELS_API_KEY": "k"}):
+            with patch(
+                "paprika_mcp.recipe_maintenance.requests.get",
+                return_value=self._pexels_response(original="https://img/orig.jpg"),
+            ):
+                self.assertEqual(web_image_search("lasagna"), "https://img/orig.jpg")
+
+    def test_detailed_search_returns_attribution(self):
+        with patch.dict("os.environ", {"PEXELS_API_KEY": "k"}):
+            with patch(
+                "paprika_mcp.recipe_maintenance.requests.get",
+                return_value=self._pexels_response(),
+            ):
+                detail = web_image_search_detailed("lasagna")
+        self.assertEqual(detail["photographer"], "Ada Cook")
+        self.assertEqual(detail["source_page"], "https://pexels.com/photo/1")
+
+    def test_empty_result_set_returns_none(self):
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"photos": []}
+        with patch.dict("os.environ", {"PEXELS_API_KEY": "k"}):
+            with patch(
+                "paprika_mcp.recipe_maintenance.requests.get", return_value=response
+            ):
+                self.assertIsNone(web_image_search("nonexistent dish"))
+
     def test_network_failure_returns_none_instead_of_raising(self):
-        env = {"GOOGLE_IMAGE_SEARCH_KEY": "k", "GOOGLE_IMAGE_SEARCH_CX": "c"}
-        with patch.dict("os.environ", env):
+        with patch.dict("os.environ", {"PEXELS_API_KEY": "k"}):
             with patch(
                 "paprika_mcp.recipe_maintenance.requests.get",
                 side_effect=requests.Timeout(),
@@ -243,7 +296,7 @@ class ThumbnailPriorityTests(unittest.TestCase):
         )
         self.assertEqual(candidate.source, "existing")
 
-    def test_source_page_beats_web_search(self):
+    def test_source_page_beats_stock_photo(self):
         candidate = candidate_thumbnail(
             make_recipe(source_url="https://site/recipe"),
             fetch_source_image=lambda url: "https://og.jpg",
@@ -253,14 +306,14 @@ class ThumbnailPriorityTests(unittest.TestCase):
         self.assertEqual(candidate.source, "source_page")
         self.assertEqual(candidate.url, "https://og.jpg")
 
-    def test_web_search_beats_wikimedia(self):
+    def test_stock_photo_beats_wikimedia(self):
         candidate = candidate_thumbnail(
             make_recipe(),
             fetch_source_image=_never,
             fetch_web_image=lambda q: "https://web.jpg",
             fetch_wikimedia_image=lambda q: "https://wiki.jpg",
         )
-        self.assertEqual(candidate.source, "web_search")
+        self.assertEqual(candidate.source, "stock_photo")
 
     def test_wikimedia_is_the_last_free_tier(self):
         candidate = candidate_thumbnail(

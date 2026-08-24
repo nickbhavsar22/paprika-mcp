@@ -11,9 +11,8 @@ services:
         sync: false
       - key: MCP_BEARER_TOKEN
         generateValue: true
-      # Optional: enables the web-image-search tier of find_free_thumbnail.
-      # Without these, that tier is skipped and the chain still works.
-      - key: GOOGLE_IMAGE_SEARCH_KEY
-        sync: false
-      - key: GOOGLE_IMAGE_SEARCH_CX
+      # Optional: enables the stock-photo tier of find_free_thumbnail.
+      # Without it, that tier is skipped and the chain still works.
+      # Free instant key at https://www.pexels.com/api/
+      - key: PEXELS_API_KEY
         sync: false
