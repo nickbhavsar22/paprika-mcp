@@ -75,8 +75,7 @@ TOOL_DEFINITION = {
             "meal_id": {
                 "type": "string",
                 "description": (
-                    "UID of the meal to delete. "
-                    "Use list_meals to find meal IDs."
+                    "UID of the meal to delete. " "Use list_meals to find meal IDs."
                 ),
             },
         },

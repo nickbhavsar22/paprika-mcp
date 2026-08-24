@@ -16,20 +16,18 @@ from ..photo import (
     normalize_to_jpeg,
     resolve_image_bytes,
 )
-from ..utils import get_remote
+from ..utils import find_recipe_by_id, get_remote
 
 
 async def set_recipe_photo_tool(args: dict[str, Any]) -> list[TextContent]:
     """Acquire an image, attach it as the recipe's thumbnail, and sync."""
-    recipe_id = args["id"]
+    recipe_id = args.get("id")
+    if not recipe_id:
+        return [TextContent(type="text", text="Error: 'id' is required.")]
 
     remote = get_remote()
 
-    recipe = None
-    for r in remote.recipes:
-        if r.uid == recipe_id:
-            recipe = r
-            break
+    recipe = find_recipe_by_id(remote, str(recipe_id))
 
     if not recipe:
         return [
@@ -94,7 +92,8 @@ TOOL_DEFINITION = {
         "computer, first give them the upload link (get_photo_upload_link); after "
         "they upload, call this with just the recipe `id` and NO code — the most "
         "recent upload is attached automatically. You can also pass an explicit "
-        "`upload_code` or a public `image_url`. The image is normalized to JPEG "
+        "`upload_code`, a public `image_url`, or `image_base64` (for an image "
+        "returned as data by a generation tool). The image is normalized to JPEG "
         "(max 1200px, q85) and uploaded to Paprika. "
         "DANGEROUS: requires user confirmation."
     ),
@@ -112,6 +111,14 @@ TOOL_DEFINITION = {
             "image_url": {
                 "type": "string",
                 "description": "Public URL of the image to attach as the thumbnail",
+            },
+            "image_base64": {
+                "type": "string",
+                "description": (
+                    "Base64-encoded image data (a 'data:image/...;base64,' prefix is "
+                    "accepted). Use this when an image-generation tool returns raw "
+                    "data instead of a hosted URL. Prefer image_url when both exist."
+                ),
             },
         },
         "required": ["id"],

@@ -50,9 +50,7 @@ async def list_groceries_tool(args: dict[str, Any]) -> list[TextContent]:
     # Filter by aisle
     if aisle_filter:
         aisle_lower = aisle_filter.lower()
-        all_items = [
-            i for i in all_items if aisle_lower in i.get("aisle", "").lower()
-        ]
+        all_items = [i for i in all_items if aisle_lower in i.get("aisle", "").lower()]
 
     if not all_items:
         filters = []
@@ -63,9 +61,7 @@ async def list_groceries_tool(args: dict[str, Any]) -> list[TextContent]:
         if not show_purchased:
             filters.append("unpurchased only")
         desc = f" ({', '.join(filters)})" if filters else ""
-        return [
-            TextContent(type="text", text=f"No grocery items found{desc}.")
-        ]
+        return [TextContent(type="text", text=f"No grocery items found{desc}.")]
 
     # Group by list, then by aisle
     by_list: dict[str, list[dict[str, Any]]] = {}

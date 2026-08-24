@@ -55,7 +55,8 @@ async def list_meals_tool(args: dict[str, Any]) -> list[TextContent]:
     if meal_type_filter:
         type_lower = meal_type_filter.lower()
         filtered = [
-            m for m in filtered
+            m
+            for m in filtered
             if meal_type_int_to_name(m.get("type", -1), token).lower() == type_lower
         ]
 

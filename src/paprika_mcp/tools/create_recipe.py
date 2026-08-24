@@ -63,7 +63,12 @@ async def create_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
     # Optionally attach a thumbnail in the same call. A photo failure does not
     # undo the created recipe — report it and continue.
     photo_status = None
-    if args.get("upload_code") or args.get("image_url") or args.get("attach_photo"):
+    if (
+        args.get("upload_code")
+        or args.get("image_url")
+        or args.get("image_base64")
+        or args.get("attach_photo")
+    ):
         try:
             raw, source_label = resolve_image_bytes(args)
             jpeg_bytes = normalize_to_jpeg(raw)
@@ -212,6 +217,13 @@ TOOL_DEFINITION = {
                 "description": (
                     "Optional. Public image URL to attach as the thumbnail in this "
                     "same call."
+                ),
+            },
+            "image_base64": {
+                "type": "string",
+                "description": (
+                    "Optional. Base64-encoded image data to attach as the thumbnail "
+                    "(for a generation tool that returns data, not a hosted URL)."
                 ),
             },
         },

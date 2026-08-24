@@ -4,7 +4,7 @@ from typing import Any
 
 from mcp.types import TextContent
 
-from ..utils import get_remote
+from ..utils import find_recipe_by_id, get_remote
 
 
 async def delete_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
@@ -15,11 +15,7 @@ async def delete_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
 
     remote = get_remote()
 
-    recipe = None
-    for r in remote.recipes:
-        if r.uid == recipe_id:
-            recipe = r
-            break
+    recipe = find_recipe_by_id(remote, str(recipe_id))
 
     if not recipe:
         return [

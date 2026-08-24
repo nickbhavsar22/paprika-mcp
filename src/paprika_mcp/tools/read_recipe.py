@@ -4,7 +4,12 @@ from typing import Any
 
 from mcp.types import TextContent
 
-from ..utils import get_remote, normalize_string, translate_category_uids
+from ..utils import (
+    find_recipe_by_id,
+    get_remote,
+    normalize_string,
+    translate_category_uids,
+)
 
 
 async def read_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
@@ -23,12 +28,7 @@ async def read_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
 
     # If we have an ID, use it directly
     if recipe_id:
-        # Need to get all recipes first to find the hash
-        recipe = None
-        for r in remote.recipes:
-            if r.uid == recipe_id:
-                recipe = r
-                break
+        recipe = find_recipe_by_id(remote, str(recipe_id))
         if not recipe:
             return [
                 TextContent(
@@ -66,9 +66,25 @@ async def read_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
         recipe.categories or [], remote.bearer_token
     )
 
+    # Thumbnail state, so a caller can tell whether a recipe still needs one.
+    photo_name = getattr(recipe, "photo", None)
+    photo_url = getattr(recipe, "photo_url", None)
+    image_url = getattr(recipe, "image_url", None)
+    has_thumbnail = bool(photo_name or photo_url or image_url)
+
     all_fields = {
         "name": lambda: [f"# {recipe.name}"],
         "uid": lambda: [f"**UID:** {recipe.uid}"],
+        "photo": lambda: (
+            [
+                "",
+                "## Thumbnail",
+                f"**Has thumbnail:** {'yes' if has_thumbnail else 'no'}",
+            ]
+            + ([f"**Photo file:** {photo_name}"] if photo_name else [])
+            + ([f"**Photo URL:** {photo_url}"] if photo_url else [])
+            + ([f"**Image source:** {image_url}"] if image_url else [])
+        ),
         "description": lambda: (
             ["", "## Description", recipe.description] if recipe.description else []
         ),
@@ -141,6 +157,7 @@ async def read_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
         "directions",
         "notes",
         "nutritional_info",
+        "photo",
     ]
 
     for field_name in field_order:
@@ -172,7 +189,9 @@ TOOL_DEFINITION = {
         "  - ingredients: List of ingredients with quantities\n"
         "  - directions: Cooking instructions\n"
         "  - notes: Additional notes\n"
-        "  - nutritional_info: Nutritional information\n\n"
+        "  - nutritional_info: Nutritional information\n"
+        "  - photo: Whether the recipe already has a thumbnail, and its photo/image "
+        "fields. Request fields=['photo'] to check cheaply before sourcing one.\n\n"
         "Use the 'fields' parameter to request only specific fields to reduce context size. "
         "For example, fields=['ingredients'] to get only the ingredient list."
     ),
@@ -203,6 +222,7 @@ TOOL_DEFINITION = {
                         "directions",
                         "notes",
                         "nutritional_info",
+                        "photo",
                     ],
                 },
                 "description": (

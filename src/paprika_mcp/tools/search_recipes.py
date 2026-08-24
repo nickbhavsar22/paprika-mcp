@@ -18,13 +18,37 @@ def validate_pagination(page: int, page_size: int) -> str | None:
 
 async def search_recipes_tool(args: dict[str, Any]) -> list[TextContent]:
     """Search recipes by text across multiple fields."""
-    query = args["query"]
+    if "query" not in args:
+        return [
+            TextContent(
+                type="text",
+                text="Error: 'query' is required (use '' to match all recipes).",
+            )
+        ]
+    query = args["query"] if args["query"] is not None else ""
+    if not isinstance(query, str):
+        query = str(query)
     fields = args.get("fields", None)
-    context_lines = args.get("context_lines", 2)
-    page = args.get("page", 1)
-    page_size = args.get("page_size", 20)
-    regex = args.get("regex", False)
+    regex = bool(args.get("regex", False))
     category_filter = args.get("category", None)
+
+    # Numeric args may arrive as strings from some clients; coerce before checks.
+    try:
+        context_lines = int(args.get("context_lines", 2) or 0)
+        page = int(args.get("page", 1))
+        page_size = int(args.get("page_size", 20))
+    except (TypeError, ValueError):
+        return [
+            TextContent(
+                type="text",
+                text=(
+                    "Error: 'context_lines', 'page', and 'page_size' must be "
+                    "integers."
+                ),
+            )
+        ]
+    if context_lines < 0:
+        return [TextContent(type="text", text="Error: 'context_lines' must be >= 0")]
 
     pagination_error = validate_pagination(page, page_size)
     if pagination_error:

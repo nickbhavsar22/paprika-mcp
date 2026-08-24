@@ -5,7 +5,7 @@ from typing import Any
 
 from mcp.types import TextContent
 
-from ..utils import get_remote
+from ..utils import find_recipe_by_id, get_remote
 
 ALLOWED_TEXT_FIELDS = {
     "name",
@@ -31,21 +31,39 @@ def is_updateable_text_field(field: str) -> bool:
 
 async def update_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
     """Update recipe fields using find/replace - DANGEROUS operation."""
-    recipe_id = args["id"]
-    field = args["field"]
-    find = args["find"]
-    replace = args["replace"]
-    use_regex = args.get("regex", False)
+    recipe_id = args.get("id")
+    field = args.get("field")
+    find = args.get("find")
+    replace = args.get("replace")
+    use_regex = bool(args.get("regex", False))
+
+    missing = [
+        key
+        for key, val in (
+            ("id", recipe_id),
+            ("field", field),
+            ("find", find),
+            ("replace", replace),
+        )
+        if val is None
+    ]
+    if missing:
+        return [
+            TextContent(
+                type="text",
+                text=f"Error: missing required argument(s): {', '.join(missing)}.",
+            )
+        ]
+
+    field = str(field)
+    find = str(find)
+    replace = str(replace)
 
     # Get the remote
     remote = get_remote()
 
     # Fetch the recipe
-    recipe = None
-    for r in remote.recipes:
-        if r.uid == recipe_id:
-            recipe = r
-            break
+    recipe = find_recipe_by_id(remote, str(recipe_id))
 
     if not recipe:
         return [

@@ -4,7 +4,12 @@ from typing import Any
 
 from mcp.types import TextContent
 
-from ..utils import get_categories, get_remote, translate_category_uids
+from ..utils import (
+    find_recipe_by_id,
+    get_categories,
+    get_remote,
+    translate_category_uids,
+)
 
 
 async def update_recipe_categories_tool(args: dict[str, Any]) -> list[TextContent]:
@@ -16,15 +21,21 @@ async def update_recipe_categories_tool(args: dict[str, Any]) -> list[TextConten
         return [TextContent(type="text", text="Error: 'id' is required.")]
     if category_names is None:
         return [TextContent(type="text", text="Error: 'categories' is required.")]
+    if not isinstance(category_names, list):
+        return [
+            TextContent(
+                type="text",
+                text=(
+                    "Error: 'categories' must be an array of category names "
+                    "(pass [] to remove all categories)."
+                ),
+            )
+        ]
 
     remote = get_remote()
     token = remote.bearer_token
 
-    recipe = None
-    for r in remote.recipes:
-        if r.uid == recipe_id:
-            recipe = r
-            break
+    recipe = find_recipe_by_id(remote, str(recipe_id))
 
     if not recipe:
         return [

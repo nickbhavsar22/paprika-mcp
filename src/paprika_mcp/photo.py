@@ -12,8 +12,11 @@ tool-argument bytes, the remote HTTP server also exposes a browser upload endpoi
 tool then references that code to attach the staged photo to a recipe.
 """
 
+import base64
+import binascii
 import hashlib
 import io
+import re
 import secrets
 import time
 import uuid as uuid_lib
@@ -142,6 +145,29 @@ def pop_latest() -> tuple[str, bytes]:
     return code, _staged.pop(code)[1]
 
 
+_DATA_URI_RE = re.compile(r"^data:image/[a-zA-Z0-9.+-]+;base64,", re.IGNORECASE)
+
+
+def decode_image_base64(value: str) -> bytes:
+    """Decode base64 image data, tolerating a data: URI prefix and whitespace.
+
+    Image-generation MCPs sometimes hand back base64 instead of a hosted URL;
+    this lets such a result be attached without a round-trip through a host.
+    """
+    payload = _DATA_URI_RE.sub("", value.strip())
+    payload = "".join(payload.split())  # strip newlines from wrapped base64
+    try:
+        raw = base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError) as e:
+        raise ValueError(f"'image_base64' is not valid base64 data: {e}") from None
+    if not raw:
+        raise ValueError("'image_base64' decoded to zero bytes.")
+    if len(raw) > MAX_DOWNLOAD_BYTES:
+        cap = MAX_DOWNLOAD_BYTES // 1024 // 1024
+        raise ValueError(f"Decoded image exceeds the {cap} MB cap.")
+    return raw
+
+
 def resolve_image_bytes(args: dict[str, Any]) -> tuple[bytes, str]:
     """Acquire source image bytes from whichever input was provided.
 
@@ -149,11 +175,14 @@ def resolve_image_bytes(args: dict[str, Any]) -> tuple[bytes, str]:
     Resolution order:
       1. `upload_code` — a specific browser-staged photo.
       2. `image_url` — a public image URL.
-      3. Neither given — the most recently staged upload (the common "I just
+      3. `image_base64` — raw/base64 image data (e.g. from an image-generation
+         MCP that returns data rather than a hosted URL).
+      4. None given — the most recently staged upload (the common "I just
          uploaded a photo, attach it" case, so no code needs copying back).
     """
     upload_code = args.get("upload_code")
     image_url = args.get("image_url")
+    image_base64 = args.get("image_base64")
 
     if upload_code:
         code = str(upload_code).strip().upper()
@@ -168,13 +197,16 @@ def resolve_image_bytes(args: dict[str, Any]) -> tuple[bytes, str]:
     if image_url:
         return _download_image(image_url), image_url
 
+    if image_base64:
+        return decode_image_base64(str(image_base64)), "generated:base64"
+
     try:
         code, data = pop_latest()
         return data, f"upload:{code}"
     except KeyError:
         raise ValueError(
             "No photo to attach. Upload one at the /upload URL first (ask for the "
-            "upload link), or pass an 'image_url'."
+            "upload link), or pass an 'image_url' or 'image_base64'."
         ) from None
 
 

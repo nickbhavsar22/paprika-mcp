@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -351,6 +352,48 @@ def source_thumbnail(source_url: str | None) -> str | None:
     return None
 
 
+def web_image_search(query: str) -> str | None:
+    """Find a photo of the dish with Google Programmable Search (image mode).
+
+    Optional and free-tier friendly: returns None when the API key / engine id
+    aren't configured (GOOGLE_IMAGE_SEARCH_KEY, GOOGLE_IMAGE_SEARCH_CX), so the
+    thumbnail chain simply falls through to the next source. Never raises.
+    """
+    api_key = os.environ.get("GOOGLE_IMAGE_SEARCH_KEY")
+    engine_id = os.environ.get("GOOGLE_IMAGE_SEARCH_CX")
+    safe_query = query.strip()
+    if not (api_key and engine_id and safe_query):
+        return None
+
+    params = {
+        "key": api_key,
+        "cx": engine_id,
+        "q": f"{safe_query} recipe food photo",
+        "searchType": "image",
+        "num": 1,
+        "safe": "active",
+        "imgSize": "large",
+        "imgType": "photo",
+    }
+    try:
+        response = requests.get(
+            "https://www.googleapis.com/customsearch/v1",
+            params=params,
+            headers=HTTP_HEADERS,
+            timeout=15,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except (requests.RequestException, ValueError):
+        return None
+
+    for item in data.get("items", []):
+        link = item.get("link")
+        if link:
+            return cast(str, link)
+    return None
+
+
 def wikimedia_thumbnail(query: str) -> str | None:
     """Try to find a representative food image on Wikimedia Commons."""
     safe_query = query.strip()
@@ -386,13 +429,30 @@ def wikimedia_thumbnail(query: str) -> str | None:
     return None
 
 
+def _search_query_for(recipe: RemoteRecipe) -> str:
+    """Build the image-search query for a recipe (name plus a yield hint)."""
+    query = recipe.name
+    if recipe.notes:
+        hint = extract_yield_hint(recipe.notes)
+        if hint:
+            query = f"{query} {hint}"
+    return query
+
+
 def candidate_thumbnail(
     recipe: RemoteRecipe,
     *,
     fetch_source_image: Callable[[str | None], str | None] = source_thumbnail,
+    fetch_web_image: Callable[[str], str | None] = web_image_search,
     fetch_wikimedia_image: Callable[[str], str | None] = wikimedia_thumbnail,
 ) -> ThumbnailCandidate | None:
-    """Find the best thumbnail candidate for a recipe."""
+    """Find the best free thumbnail candidate for a recipe.
+
+    Priority: an existing thumbnail, the recipe's own source page, a broad web
+    image search (only if configured), a linked YouTube video, then Wikimedia
+    Commons. Returns None when no free source yields an image — the caller can
+    then fall back to generating one.
+    """
     existing = (recipe.image_url or "").strip()
     if existing:
         return ThumbnailCandidate(
@@ -437,11 +497,19 @@ def candidate_thumbnail(
             notes="Thumbnail derived from a linked YouTube video",
         )
 
-    query = recipe.name
-    if recipe.notes:
-        hint = extract_yield_hint(recipe.notes)
-        if hint:
-            query = f"{query} {hint}"
+    query = _search_query_for(recipe)
+
+    # Broad web image search. Sits below the recipe's own source page and linked
+    # video (which are specific to this recipe) but above Wikimedia, which has
+    # thin coverage for anything but well-known dishes.
+    web_image = fetch_web_image(query)
+    if web_image:
+        return ThumbnailCandidate(
+            url=web_image,
+            source="web_search",
+            confidence=0.75,
+            notes="Photo of the dish found via web image search",
+        )
 
     wikimedia_image = fetch_wikimedia_image(query)
     if wikimedia_image:

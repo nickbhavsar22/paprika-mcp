@@ -157,8 +157,7 @@ TOOL_DEFINITION = {
             "recipe_id": {
                 "type": "string",
                 "description": (
-                    "New recipe UID to link. "
-                    "Use empty string '' to unlink a recipe."
+                    "New recipe UID to link. " "Use empty string '' to unlink a recipe."
                 ),
             },
             "order_flag": {

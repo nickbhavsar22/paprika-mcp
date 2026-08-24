@@ -16,6 +16,8 @@ from .delete_meal import TOOL_DEFINITION as DELETE_MEAL_DEF
 from .delete_meal import delete_meal_tool
 from .delete_recipe import TOOL_DEFINITION as DELETE_RECIPE_DEF
 from .delete_recipe import delete_recipe_tool
+from .find_free_thumbnail import TOOL_DEFINITION as FIND_FREE_THUMBNAIL_DEF
+from .find_free_thumbnail import find_free_thumbnail_tool
 from .format_fraction import TOOL_DEFINITION as FORMAT_FRACTION_DEF
 from .format_fraction import format_fraction_tool
 from .get_photo_upload_link import TOOL_DEFINITION as GET_PHOTO_UPLOAD_LINK_DEF
@@ -76,6 +78,10 @@ TOOLS = {
     "set_recipe_photo": {
         "definition": SET_RECIPE_PHOTO_DEF,
         "handler": set_recipe_photo_tool,
+    },
+    "find_free_thumbnail": {
+        "definition": FIND_FREE_THUMBNAIL_DEF,
+        "handler": find_free_thumbnail_tool,
     },
     "get_photo_upload_link": {
         "definition": GET_PHOTO_UPLOAD_LINK_DEF,
@@ -153,6 +159,7 @@ __all__ = [
     "delete_grocery_tool",
     "delete_meal_tool",
     "delete_recipe_tool",
+    "find_free_thumbnail_tool",
     "format_fraction_tool",
     "get_photo_upload_link_tool",
     "list_categories_tool",

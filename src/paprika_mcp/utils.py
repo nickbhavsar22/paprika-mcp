@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import time
 import unicodedata
 from datetime import date, timedelta
 from typing import Any, cast
@@ -12,17 +13,101 @@ from typing import Any, cast
 import requests
 from paprika_recipes.cache import DirectoryCache
 from paprika_recipes.remote import Remote
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
-# Module-level cache for categories (persists for server lifetime)
-_categories_cache: dict[str, dict[str, str]] | None = None
-
-# Module-level cache for meal types (persists for server lifetime)
-_meal_types_cache: list[dict[str, Any]] | None = None
-
 # Paprika API base URL
 PAPRIKA_API_BASE = "https://www.paprikaapp.com/api/v2/sync"
+
+
+class PaprikaAPIError(Exception):
+    """A Paprika API call failed (network, HTTP status, or an error body).
+
+    Distinct from a call that succeeded and returned no items — callers use it
+    to report an outage instead of silently showing an empty list or dropping
+    data (e.g. categories).
+    """
+
+
+# --- Shared hardened HTTP session ---------------------------------------------
+# The recipe layer (paprika_recipes.Remote) already retries transient failures
+# and raises on error bodies. These helpers give the raw grocery/meal/category/
+# aisle calls the same treatment through one reused session.
+_session: requests.Session | None = None
+
+
+def _get_session() -> requests.Session:
+    """Return a process-wide requests.Session with a retry adapter."""
+    global _session
+    if _session is None:
+        s = requests.Session()
+        retry = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET", "POST"],
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        s.mount("https://", adapter)
+        s.mount("http://", adapter)
+        _session = s
+    return _session
+
+
+def _api_get(path: str, bearer_token: str, **kwargs: Any) -> dict[str, Any]:
+    """GET a Paprika sync endpoint through the hardened session.
+
+    Raises PaprikaAPIError on any network/HTTP failure or an error body, so a
+    fetch failure is never mistaken for an empty result.
+    """
+    headers = {"Authorization": f"Bearer {bearer_token}"}
+    url = f"{PAPRIKA_API_BASE}/{path.lstrip('/')}"
+    try:
+        resp = _get_session().get(url, headers=headers, timeout=30, **kwargs)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.RequestException as e:
+        raise PaprikaAPIError(f"Paprika API request failed: {e}") from e
+    except ValueError as e:  # malformed JSON
+        raise PaprikaAPIError(f"Paprika API returned invalid JSON: {e}") from e
+    if isinstance(data, dict) and "error" in data:
+        err = data["error"]
+        msg = err.get("message", "Unknown error") if isinstance(err, dict) else str(err)
+        raise PaprikaAPIError(f"Paprika API returned an error: {msg}")
+    return data
+
+
+# --- TTL cache for slowly-changing lookup data --------------------------------
+# App-side changes (a new grocery list, aisle, or meal type) are picked up
+# without a server restart once the entry expires.
+_CACHE_TTL_SECONDS = 300  # 5 minutes
+_ttl_cache: dict[str, tuple[float, Any]] = {}
+
+
+def _cache_get(key: str) -> Any | None:
+    entry = _ttl_cache.get(key)
+    if entry is None:
+        return None
+    ts, val = entry
+    if time.time() - ts > _CACHE_TTL_SECONDS:
+        _ttl_cache.pop(key, None)
+        return None
+    return val
+
+
+def _cache_set(key: str, val: Any) -> None:
+    _ttl_cache[key] = (time.time(), val)
+
+
+def invalidate_cache(*keys: str) -> None:
+    """Drop cached lookup data. With no args, clears everything."""
+    if not keys:
+        _ttl_cache.clear()
+        return
+    for k in keys:
+        _ttl_cache.pop(k, None)
 
 
 def get_credentials() -> tuple[str, str]:
@@ -95,24 +180,13 @@ def get_user_agent() -> str | None:
     return None
 
 
-def get_remote() -> Remote:
-    """Get authenticated Remote instance using stored credentials.
+# Authenticated Remote, reused across tool calls so we don't POST a fresh login
+# to /account/login/ on every single call.
+_remote: Remote | None = None
 
-    The Remote class uses a DirectoryCache to store recipe data locally:
-    - Recipe metadata (list of UIDs/hashes) is always fetched fresh from the API
-    - Individual recipe details are cached in ~/.paprika-mcp/cache/
-    - Cached recipes are keyed by UID and validated by hash
-    - If a recipe's hash matches the cache, the cached version is used
-    - If hash differs or not cached, recipe is fetched from API and cached
 
-    Note: Remote.recipes is a generator that makes API calls. If you need to
-    iterate multiple times or access by index, convert to list first.
-
-    Raises:
-        ValueError: If credentials are not configured
-        PaprikaError: If authentication fails (check credentials)
-        RequestError: If API request fails (network/server issue)
-    """
+def _build_remote() -> Remote:
+    """Construct and authenticate a new Remote."""
     email, password = get_credentials()
     user_agent = get_user_agent()
 
@@ -137,6 +211,54 @@ def get_remote() -> Remote:
         raise
 
 
+def get_remote() -> Remote:
+    """Get authenticated Remote instance using stored credentials.
+
+    The authenticated Remote (and its bearer token) is memoized for the server
+    lifetime; call `reset_remote()` to force a re-login after an auth failure.
+
+    The Remote class uses a DirectoryCache to store recipe data locally:
+    - Recipe metadata (list of UIDs/hashes) is always fetched fresh from the API
+    - Individual recipe details are cached in ~/.paprika-mcp/cache/
+    - Cached recipes are keyed by UID and validated by hash
+    - If a recipe's hash matches the cache, the cached version is used
+    - If hash differs or not cached, recipe is fetched from API and cached
+
+    Note: Remote.recipes is a generator that makes API calls. If you need to
+    iterate multiple times or access by index, convert to list first.
+
+    Raises:
+        ValueError: If credentials are not configured
+        PaprikaError: If authentication fails (check credentials)
+        RequestError: If API request fails (network/server issue)
+    """
+    global _remote
+    if _remote is None:
+        _remote = _build_remote()
+    return _remote
+
+
+def reset_remote() -> None:
+    """Drop the cached Remote so the next call re-authenticates."""
+    global _remote
+    _remote = None
+
+
+def find_recipe_by_id(remote: Remote, recipe_id: str) -> Any | None:
+    """Fetch one recipe by UID without downloading the whole library.
+
+    `remote.recipes` is a generator that fetches every recipe in turn, so
+    scanning it for one UID costs an API call per recipe. This makes two calls:
+    the identifier list (uid + hash for all recipes) and the single recipe.
+
+    Returns the RemoteRecipe, or None if no recipe has that UID.
+    """
+    for ident in remote._get_remote_recipe_identifiers():
+        if ident.uid == recipe_id:
+            return remote.get_recipe_by_id(ident.uid, ident.hash)
+    return None
+
+
 def get_categories(bearer_token: str) -> dict[str, Any]:
     """Get all categories from Paprika API with caching.
 
@@ -146,57 +268,40 @@ def get_categories(bearer_token: str) -> dict[str, Any]:
     - 'all': list of all category dicts
     - 'by_uid': mapping of UUID to full category dict
 
-    Results are cached for the lifetime of the server process.
+    Results are cached briefly (see _CACHE_TTL_SECONDS).
+
+    Raises:
+        PaprikaAPIError: If the fetch fails. Callers must not treat a failure as
+            "no categories" — that would silently drop a recipe's categories.
     """
-    global _categories_cache
+    cached = _cache_get("categories")
+    if cached is not None:
+        return cast(dict[str, Any], cached)
 
-    # Return cached version if available
-    if _categories_cache is not None:
-        return _categories_cache
+    data = _api_get("categories/", bearer_token)
+    categories = data.get("result", [])
 
-    # Fetch from API
-    headers = {"Authorization": f"Bearer {bearer_token}"}
-    try:
-        resp = requests.get(
-            "https://www.paprikaapp.com/api/v2/sync/categories/",
-            headers=headers,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        categories = data.get("result", [])
+    # Build mappings
+    uid_to_name = {}
+    name_to_uid = {}
+    by_uid = {}
 
-        # Build mappings
-        uid_to_name = {}
-        name_to_uid = {}
-        by_uid = {}
+    for cat in categories:
+        uid = cat["uid"]
+        name = cat.get("name", "")
+        if name:
+            uid_to_name[uid] = name
+            name_to_uid[name.lower()] = uid
+            by_uid[uid] = cat
 
-        for cat in categories:
-            uid = cat["uid"]
-            name = cat.get("name", "")
-            if name:
-                uid_to_name[uid] = name
-                name_to_uid[name.lower()] = uid
-                by_uid[uid] = cat
-
-        _categories_cache = {
-            "uid_to_name": uid_to_name,
-            "name_to_uid": name_to_uid,
-            "all": categories,
-            "by_uid": by_uid,
-        }
-
-        return _categories_cache
-
-    except requests.RequestException as e:
-        logger.warning(f"Failed to fetch categories: {e}")
-        # Return empty mappings on error
-        return {
-            "uid_to_name": {},
-            "name_to_uid": {},
-            "all": [],
-            "by_uid": {},
-        }
+    result = {
+        "uid_to_name": uid_to_name,
+        "name_to_uid": name_to_uid,
+        "all": categories,
+        "by_uid": by_uid,
+    }
+    _cache_set("categories", result)
+    return result
 
 
 def translate_category_uids(uids: list[str], bearer_token: str) -> str:
@@ -207,12 +312,18 @@ def translate_category_uids(uids: list[str], bearer_token: str) -> str:
         bearer_token: Paprika API bearer token
 
     Returns:
-        Comma-separated string of category names
+        Comma-separated string of category names. If the category list can't be
+        fetched, returns the raw UIDs with a note rather than failing the caller
+        (this is display-only; resolution paths let the error propagate).
     """
     if not uids:
         return ""
 
-    categories = get_categories(bearer_token)
+    try:
+        categories = get_categories(bearer_token)
+    except PaprikaAPIError as e:
+        logger.warning(f"Could not translate category UIDs: {e}")
+        return f"{', '.join(uids)} (names unavailable — category lookup failed)"
     uid_to_name = categories["uid_to_name"]
 
     names = [uid_to_name.get(uid, f"Unknown-{uid[:8]}") for uid in uids]
@@ -292,26 +403,18 @@ def get_meal_types(bearer_token: str) -> list[dict[str, Any]]:
     Returns a list of meal type dicts with keys:
     uid, name, order_flag, color, export_all_day, export_time, original_type.
 
-    Results are cached for the lifetime of the server process.
+    Results are cached briefly (see _CACHE_TTL_SECONDS).
+
+    Raises:
+        PaprikaAPIError: If the fetch fails.
     """
-    global _meal_types_cache
+    cached = _cache_get("meal_types")
+    if cached is not None:
+        return cast(list[dict[str, Any]], cached)
 
-    if _meal_types_cache is not None:
-        return _meal_types_cache
-
-    headers = {"Authorization": f"Bearer {bearer_token}"}
-    try:
-        resp = requests.get(
-            f"{PAPRIKA_API_BASE}/mealtypes/",
-            headers=headers,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        _meal_types_cache = resp.json().get("result", [])
-        return _meal_types_cache
-    except requests.RequestException as e:
-        logger.warning(f"Failed to fetch meal types: {e}")
-        return []
+    meal_types = _api_get("mealtypes/", bearer_token).get("result", [])
+    _cache_set("meal_types", meal_types)
+    return cast(list[dict[str, Any]], meal_types)
 
 
 def meal_type_int_to_name(type_int: int, bearer_token: str) -> str:
@@ -352,53 +455,60 @@ def get_meals(bearer_token: str) -> list[dict[str, Any]]:
     """Fetch all non-deleted meals from Paprika API.
 
     Returns a list of meal dicts sorted by date, then type, then order_flag.
+
+    Raises:
+        PaprikaAPIError: If the fetch fails (never returns [] for an outage).
     """
-    headers = {"Authorization": f"Bearer {bearer_token}"}
-    try:
-        resp = requests.get(
-            f"{PAPRIKA_API_BASE}/meals/",
-            headers=headers,
-            timeout=30,
+    meals = _api_get("meals/", bearer_token).get("result", [])
+    # Sort by date, then type, then order_flag
+    meals.sort(
+        key=lambda m: (
+            m.get("date", ""),
+            m.get("type", 0),
+            m.get("order_flag", 0),
         )
-        resp.raise_for_status()
-        meals = resp.json().get("result", [])
-        # Sort by date, then type, then order_flag
-        meals.sort(
-            key=lambda m: (
-                m.get("date", ""),
-                m.get("type", 0),
-                m.get("order_flag", 0),
-            )
-        )
-        return meals
-    except requests.RequestException as e:
-        logger.warning(f"Failed to fetch meals: {e}")
-        return []
+    )
+    return cast(list[dict[str, Any]], meals)
 
 
-def save_meal(bearer_token: str, meal_data: dict[str, Any]) -> dict[str, Any]:
-    """Create or update a meal via the Paprika API.
+def _api_post_gzipped(path: str, bearer_token: str, payload: Any) -> dict[str, Any]:
+    """POST a gzip-compressed JSON payload as multipart form-data.
 
-    The API expects a gzip-compressed JSON list posted as multipart form-data.
+    This is the shape every Paprika sync write endpoint expects. Goes through
+    the shared retrying session and inspects the body for an error object.
 
     Returns dict with 'success' bool and optional 'error' message.
     """
     headers = {"Authorization": f"Bearer {bearer_token}"}
+    url = f"{PAPRIKA_API_BASE}/{path.lstrip('/')}"
     try:
-        compressed = gzip.compress(json.dumps([meal_data]).encode("utf-8"))
-        resp = requests.post(
-            f"{PAPRIKA_API_BASE}/meals/",
+        compressed = gzip.compress(json.dumps(payload).encode("utf-8"))
+        resp = _get_session().post(
+            url,
             headers=headers,
             files={"data": compressed},
             timeout=30,
         )
         resp.raise_for_status()
         result = resp.json()
-        if "error" in result:
-            return {"success": False, "error": result["error"].get("message", "Unknown error")}
-        return {"success": True}
     except requests.RequestException as e:
         return {"success": False, "error": str(e)}
+    except ValueError as e:  # malformed JSON
+        return {"success": False, "error": f"Invalid JSON in response: {e}"}
+
+    if isinstance(result, dict) and "error" in result:
+        err = result["error"]
+        msg = err.get("message", "Unknown error") if isinstance(err, dict) else str(err)
+        return {"success": False, "error": msg}
+    return {"success": True}
+
+
+def save_meal(bearer_token: str, meal_data: dict[str, Any]) -> dict[str, Any]:
+    """Create or update a meal via the Paprika API.
+
+    Returns dict with 'success' bool and optional 'error' message.
+    """
+    return _api_post_gzipped("meals/", bearer_token, [meal_data])
 
 
 def resolve_date(date_str: str) -> str:
@@ -429,8 +539,13 @@ def resolve_date(date_str: str) -> str:
         return (today - timedelta(days=1)).isoformat()
 
     day_names = [
-        "monday", "tuesday", "wednesday", "thursday",
-        "friday", "saturday", "sunday",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
     ]
 
     # "next monday" etc. - always at least 1 day in the future
@@ -461,63 +576,43 @@ def resolve_date(date_str: str) -> str:
 
 # --- Grocery utilities ---
 
-# Module-level caches (persist for server lifetime)
-_grocery_lists_cache: list[dict[str, Any]] | None = None
-_grocery_aisles_cache: list[dict[str, Any]] | None = None
-
 
 def get_grocery_lists(bearer_token: str) -> list[dict[str, Any]]:
-    """Get all grocery lists from Paprika API with caching.
+    """Get all grocery lists from Paprika API with brief caching.
 
     Returns list of dicts with keys: uid, name, order_flag, is_default, reminders_list.
     Sorted by order_flag.
+
+    Raises:
+        PaprikaAPIError: If the fetch fails.
     """
-    global _grocery_lists_cache
+    cached = _cache_get("grocery_lists")
+    if cached is not None:
+        return cast(list[dict[str, Any]], cached)
 
-    if _grocery_lists_cache is not None:
-        return _grocery_lists_cache
-
-    headers = {"Authorization": f"Bearer {bearer_token}"}
-    try:
-        resp = requests.get(
-            f"{PAPRIKA_API_BASE}/grocerylists/",
-            headers=headers,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        _grocery_lists_cache = resp.json().get("result", [])
-        _grocery_lists_cache.sort(key=lambda gl: gl.get("order_flag", 0))
-        return _grocery_lists_cache
-    except requests.RequestException as e:
-        logger.warning(f"Failed to fetch grocery lists: {e}")
-        return []
+    lists = _api_get("grocerylists/", bearer_token).get("result", [])
+    lists.sort(key=lambda gl: gl.get("order_flag", 0))
+    _cache_set("grocery_lists", lists)
+    return cast(list[dict[str, Any]], lists)
 
 
 def get_grocery_aisles(bearer_token: str) -> list[dict[str, Any]]:
-    """Get all grocery aisles from Paprika API with caching.
+    """Get all grocery aisles from Paprika API with brief caching.
 
     Returns list of dicts with keys: uid, name, order_flag.
     Sorted by order_flag.
+
+    Raises:
+        PaprikaAPIError: If the fetch fails.
     """
-    global _grocery_aisles_cache
+    cached = _cache_get("grocery_aisles")
+    if cached is not None:
+        return cast(list[dict[str, Any]], cached)
 
-    if _grocery_aisles_cache is not None:
-        return _grocery_aisles_cache
-
-    headers = {"Authorization": f"Bearer {bearer_token}"}
-    try:
-        resp = requests.get(
-            f"{PAPRIKA_API_BASE}/groceryaisles/",
-            headers=headers,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        _grocery_aisles_cache = resp.json().get("result", [])
-        _grocery_aisles_cache.sort(key=lambda a: a.get("order_flag", 0))
-        return _grocery_aisles_cache
-    except requests.RequestException as e:
-        logger.warning(f"Failed to fetch grocery aisles: {e}")
-        return []
+    aisles = _api_get("groceryaisles/", bearer_token).get("result", [])
+    aisles.sort(key=lambda a: a.get("order_flag", 0))
+    _cache_set("grocery_aisles", aisles)
+    return cast(list[dict[str, Any]], aisles)
 
 
 def resolve_grocery_list(
@@ -553,104 +648,66 @@ def resolve_grocery_list(
     return None
 
 
-def resolve_aisle_uid(aisle_name: str, bearer_token: str) -> str:
-    """Resolve an aisle name to its UID. Returns empty string if not found."""
+def resolve_aisle_uid(aisle_name: str, bearer_token: str) -> str | None:
+    """Resolve an aisle name to its UID.
+
+    Returns None when the name matches no existing aisle, so callers can warn
+    the user (the item still saves, but Paprika won't file it under that aisle).
+    """
     aisles = get_grocery_aisles(bearer_token)
     name_lower = aisle_name.lower()
     for a in aisles:
         if a.get("name", "").lower() == name_lower:
-            return a["uid"]
-    return ""
+            return cast(str, a["uid"])
+    logger.warning(f"Grocery aisle '{aisle_name}' did not match any existing aisle")
+    return None
+
+
+def aisle_names(bearer_token: str) -> list[str]:
+    """Names of all configured grocery aisles (for error messages)."""
+    try:
+        return [a.get("name", "") for a in get_grocery_aisles(bearer_token)]
+    except PaprikaAPIError:
+        return []
 
 
 def get_groceries(bearer_token: str) -> list[dict[str, Any]]:
     """Fetch all grocery items from Paprika API.
 
     Returns a list of grocery dicts sorted by aisle then order_flag.
+
+    Raises:
+        PaprikaAPIError: If the fetch fails (never returns [] for an outage).
     """
-    headers = {"Authorization": f"Bearer {bearer_token}"}
-    try:
-        resp = requests.get(
-            f"{PAPRIKA_API_BASE}/groceries/",
-            headers=headers,
-            timeout=30,
+    items = _api_get("groceries/", bearer_token).get("result", [])
+    items.sort(
+        key=lambda i: (
+            i.get("aisle", ""),
+            i.get("order_flag", 0),
         )
-        resp.raise_for_status()
-        items = resp.json().get("result", [])
-        items.sort(
-            key=lambda i: (
-                i.get("aisle", ""),
-                i.get("order_flag", 0),
-            )
-        )
-        return items
-    except requests.RequestException as e:
-        logger.warning(f"Failed to fetch groceries: {e}")
-        return []
+    )
+    return cast(list[dict[str, Any]], items)
 
 
-def save_grocery(
-    bearer_token: str, item_data: dict[str, Any]
-) -> dict[str, Any]:
+def save_grocery(bearer_token: str, item_data: dict[str, Any]) -> dict[str, Any]:
     """Create or update a grocery item via the Paprika API.
-
-    The API expects a gzip-compressed JSON list posted as multipart form-data.
 
     Returns dict with 'success' bool and optional 'error' message.
     """
-    headers = {"Authorization": f"Bearer {bearer_token}"}
-    try:
-        compressed = gzip.compress(json.dumps([item_data]).encode("utf-8"))
-        resp = requests.post(
-            f"{PAPRIKA_API_BASE}/groceries/",
-            headers=headers,
-            files={"data": compressed},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        result = resp.json()
-        if "error" in result:
-            return {
-                "success": False,
-                "error": result["error"].get("message", "Unknown error"),
-            }
-        return {"success": True}
-    except requests.RequestException as e:
-        return {"success": False, "error": str(e)}
+    return _api_post_gzipped("groceries/", bearer_token, [item_data])
 
 
 # --- Category utilities ---
 
 
-def save_category(
-    bearer_token: str, cat_data: dict[str, Any]
-) -> dict[str, Any]:
+def save_category(bearer_token: str, cat_data: dict[str, Any]) -> dict[str, Any]:
     """Create, update, or delete a category via the Paprika API.
 
-    The API expects a gzip-compressed JSON list posted as multipart form-data.
-    Invalidates the category cache on success.
+    Invalidates the category cache on success so the change is visible at once.
 
     Returns dict with 'success' bool and optional 'error' message.
     """
-    global _categories_cache
-
-    headers = {"Authorization": f"Bearer {bearer_token}"}
-    try:
-        compressed = gzip.compress(json.dumps([cat_data]).encode("utf-8"))
-        resp = requests.post(
-            f"{PAPRIKA_API_BASE}/categories/",
-            headers=headers,
-            files={"data": compressed},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        result = resp.json()
-        if "error" in result:
-            return {
-                "success": False,
-                "error": result["error"].get("message", "Unknown error"),
-            }
-        _categories_cache = None
-        return {"success": True}
-    except requests.RequestException as e:
-        return {"success": False, "error": str(e)}
+    result = _api_post_gzipped("categories/", bearer_token, [cat_data])
+    if result["success"]:
+        invalidate_cache("categories")
+    return result
