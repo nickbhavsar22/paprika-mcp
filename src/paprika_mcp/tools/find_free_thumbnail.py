@@ -92,6 +92,16 @@ async def find_free_thumbnail_tool(args: dict[str, Any]) -> list[TextContent]:
             )
         ]
 
+    # Getting here with a thumbnail still on the recipe means it failed
+    # validation, so say plainly that attaching would replace it.
+    current = (recipe.image_url or "").strip()
+    replacing = ""
+    if current:
+        replacing = (
+            f"\n\n**Replaces the current thumbnail**, which failed "
+            f"validation (site chrome, or too small to use):\n{current}"
+        )
+
     confident = candidate.confidence >= CONFIDENT_THRESHOLD
     verdict = (
         "Good candidate — attach it with `set_recipe_photo`."
@@ -110,7 +120,8 @@ async def find_free_thumbnail_tool(args: dict[str, Any]) -> list[TextContent]:
                 f"**URL:** {candidate.url}\n"
                 f"**Source:** {candidate.source}\n"
                 f"**Confidence:** {candidate.confidence:.2f}\n"
-                f"**Notes:** {candidate.notes}\n\n"
+                f"**Notes:** {candidate.notes}"
+                f"{replacing}\n\n"
                 f"{verdict}"
             ),
         )
@@ -125,7 +136,9 @@ TOOL_DEFINITION = {
         "recipe's own source page, any linked YouTube video, Pexels stock photos, "
         "and Wikimedia Commons, and returns the best candidate URL with a "
         "confidence score. It does NOT attach anything: pass the returned URL to "
-        "`set_recipe_photo` if it looks right. If nothing is found, fall back to "
+        "`set_recipe_photo` if it looks right. Also re-checks a thumbnail the recipe "
+        "already has, and proposes a replacement when that one is a logo or too "
+        "small to use. If nothing is found, fall back to "
         "image generation (see the `set_recipe_thumbnail` prompt for the full chain)."
     ),
     "inputSchema": {

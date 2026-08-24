@@ -18,6 +18,7 @@ from paprika_mcp import photo, utils
 from paprika_mcp.recipe_maintenance import (
     _extract_link_image,
     candidate_thumbnail,
+    existing_thumbnail_usable,
     looks_like_photo,
     source_thumbnail,
     verify_image_dimensions,
@@ -489,3 +490,104 @@ class RemoteCachingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExistingThumbnailValidationTests(unittest.TestCase):
+    """A thumbnail already on the recipe must be re-judged, not trusted.
+
+    Regression: candidate_thumbnail returned the existing image_url at
+    confidence 1.0 with no validation, so find_free_thumbnail answered
+    "already has a thumbnail - nothing to do" for 12 real recipes whose
+    thumbnail was the dish at a 40x60 to 150x188 WordPress crop. The library
+    sweep only caught them because it called looks_like_photo directly.
+    """
+
+    @staticmethod
+    def _recipe(image_url="", photo_url=None, source_url=""):
+        return types.SimpleNamespace(
+            name="Test Dish",
+            image_url=image_url,
+            photo_url=photo_url,
+            source_url=source_url,
+            description="",
+            notes="",
+        )
+
+    def _candidate(self, recipe, source_image=None):
+        """Run discovery with every network tier stubbed out."""
+        return candidate_thumbnail(
+            recipe,
+            fetch_source_image=lambda _u: source_image,
+            fetch_web_image=lambda _q: None,
+            fetch_wikimedia_image=lambda _q: None,
+        )
+
+    def test_usable_existing_thumbnail_still_wins(self):
+        recipe = self._recipe(image_url="https://s.com/photos/dish.jpg")
+        candidate = self._candidate(recipe)
+        self.assertEqual(candidate.source, "existing")
+        self.assertEqual(candidate.confidence, 1.0)
+
+    def test_tiny_crop_falls_through_to_a_real_candidate(self):
+        # The exact shape of the 12 bad recipes: right dish, 100x100 crop.
+        recipe = self._recipe(
+            image_url="https://d.com/uploads/Chicken-Carnitas-11-100x100.jpg",
+            source_url="https://d.com/recipe",
+        )
+        candidate = self._candidate(
+            recipe, source_image="https://d.com/uploads/Chicken-Carnitas-7.jpg"
+        )
+        self.assertEqual(candidate.source, "source_page")
+
+    def test_logo_thumbnail_falls_through(self):
+        recipe = self._recipe(
+            image_url="https://s.com/cropped-SiteLogo-32x32.png",
+            source_url="https://s.com/recipe",
+        )
+        candidate = self._candidate(
+            recipe, source_image="https://s.com/dish-1200x800.jpg"
+        )
+        self.assertEqual(candidate.source, "source_page")
+
+    def test_bad_image_url_does_not_fall_back_to_stored_photo_url(self):
+        """photo_url is Paprika's copy of the same bad image, so skip it too."""
+        recipe = self._recipe(
+            image_url="https://s.com/dish-40x60.jpg",
+            photo_url="https://s3.amazonaws.com/uploads/ABC123.jpg",
+            source_url="https://s.com/recipe",
+        )
+        candidate = self._candidate(
+            recipe, source_image="https://s.com/dish-1200x800.jpg"
+        )
+        self.assertEqual(candidate.source, "source_page")
+
+    def test_device_upload_label_is_always_kept(self):
+        """'upload:CODE' is not a URL and says nothing about the picture."""
+        for label in ("upload:AB12EF", "generated:base64"):
+            with self.subTest(label=label):
+                candidate = self._candidate(self._recipe(image_url=label))
+                self.assertEqual(candidate.source, "existing")
+
+    def test_photo_url_tier_survives_when_image_url_is_empty(self):
+        recipe = self._recipe(photo_url="https://s3.amazonaws.com/up/ABC.jpg")
+        candidate = self._candidate(recipe)
+        self.assertEqual(candidate.source, "existing_photo_url")
+
+    def test_existing_thumbnail_usable_helper(self):
+        cases = [
+            ("https://s.com/dish.jpg", True),
+            ("https://s.com/dish-40x60.jpg", False),
+            ("https://s.com/favicon.ico", False),
+            ("upload:AB12EF", True),
+            ("generated:base64", True),
+            ("", False),
+            (None, False),
+        ]
+        for url, expected in cases:
+            with self.subTest(url=url):
+                self.assertEqual(existing_thumbnail_usable(url), expected)
+
+    def test_no_replacement_found_returns_none_not_the_bad_one(self):
+        """If nothing better exists, do not quietly re-offer the bad crop."""
+        recipe = self._recipe(image_url="https://s.com/dish-40x60.jpg")
+        self.assertIsNone(self._candidate(recipe))

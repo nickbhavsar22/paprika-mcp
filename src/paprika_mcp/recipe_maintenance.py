@@ -371,6 +371,20 @@ def looks_like_photo(url: str | None) -> bool:
     return True
 
 
+def existing_thumbnail_usable(url: str | None) -> bool:
+    """Whether a thumbnail already attached to a recipe is worth keeping.
+
+    Only an http(s) URL can be judged. A photo uploaded from a device or
+    returned by a generator stores a label like "upload:AB12EF" instead, which
+    says nothing about the picture, so those are always kept.
+    """
+    if not url:
+        return False
+    if not url.lower().startswith(("http://", "https://")):
+        return True
+    return looks_like_photo(url)
+
+
 def verify_image_dimensions(
     url: str, min_dimension: int = MIN_THUMBNAIL_DIMENSION
 ) -> bool:
@@ -542,28 +556,35 @@ def candidate_thumbnail(
 ) -> ThumbnailCandidate | None:
     """Find the best free thumbnail candidate for a recipe.
 
-    Priority: an existing thumbnail, the recipe's own source page, a broad web
+    Priority: an existing thumbnail (only if it passes validation), the
+    recipe's own source page, a broad web
     image search (only if configured), a linked YouTube video, then Wikimedia
     Commons. Returns None when no free source yields an image — the caller can
     then fall back to generating one.
     """
     existing = (recipe.image_url or "").strip()
     if existing:
-        return ThumbnailCandidate(
-            url=existing,
-            source="existing",
-            confidence=1.0,
-            notes="Recipe already has a thumbnail",
-        )
-
-    photo_url = (getattr(recipe, "photo_url", None) or "").strip()
-    if photo_url:
-        return ThumbnailCandidate(
-            url=photo_url,
-            source="existing_photo_url",
-            confidence=0.95,
-            notes="Using existing photo_url field",
-        )
+        if existing_thumbnail_usable(existing):
+            return ThumbnailCandidate(
+                url=existing,
+                source="existing",
+                confidence=1.0,
+                notes="Recipe already has a thumbnail",
+            )
+        # The current thumbnail is site chrome or a crop too small to use.
+        # photo_url holds Paprika's stored copy of that same image, so skip
+        # that tier too and go looking for a real replacement. This tier used
+        # to return unconditionally at confidence 1.0, which made a bad
+        # thumbnail permanently invisible to `find_free_thumbnail`.
+    else:
+        photo_url = (getattr(recipe, "photo_url", None) or "").strip()
+        if photo_url and existing_thumbnail_usable(photo_url):
+            return ThumbnailCandidate(
+                url=photo_url,
+                source="existing_photo_url",
+                confidence=0.95,
+                notes="Using existing photo_url field",
+            )
 
     source_url = (recipe.source_url or "").strip()
     source_image = fetch_source_image(source_url) if source_url else None
