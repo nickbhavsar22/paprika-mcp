@@ -1,8 +1,29 @@
+# Render deploy config.
+#
+# This MUST stay in sync with the dashboard. Until Aug 31, 2026 it was not: this file declared a
+# Docker service on the free plan while the live service ran native Python on starter. A blueprint
+# sync of the stale file would have tried to rebuild the service as Docker and broken it. If you
+# change the service by hand, change this file in the same commit.
 services:
   - type: web
     name: paprika-mcp
-    runtime: docker
+    # Native Python, NOT docker — matches the live service and the build/start commands below.
+    runtime: python
+    # free, deliberately. This is a personal, bursty MCP server (single-digit to ~110 requests a
+    # day, in short bursts) reached from the Claude phone/desktop apps. It genuinely idles, so it
+    # draws only a few hours a day from the workspace-wide 750 instance-hour free quota rather
+    # than the 744 h an always-on service would.
+    #
+    # THE QUOTA IS SHARED ACROSS THE WORKSPACE, NOT PER SERVICE. On Aug 16, 2026 two always-on
+    # free services burned 750.5 h in 15.6 days and Render suspended every free service until the
+    # 1st — see the long note in Lake forecast/render.yaml. Free is safe HERE only because this
+    # service sleeps. If it is ever pinned awake (an uptime pinger, a polling client), it will
+    # exhaust the pool on its own and take journal-mcp down with it. Put it back on starter first.
     plan: free
+    buildCommand: pip install -e .
+    startCommand: uvicorn paprika_mcp.server_http:asgi_app --host 0.0.0.0 --port $PORT
+    # Route("/healthz", healthz) in src/paprika_mcp/server_http.py. The live service had this
+    # blank; declaring it is what makes a failed deploy fail loudly instead of going live broken.
     healthCheckPath: /healthz
     envVars:
       - key: PAPRIKA_EMAIL
