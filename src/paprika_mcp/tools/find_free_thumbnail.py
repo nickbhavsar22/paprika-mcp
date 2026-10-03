@@ -7,12 +7,13 @@ is attached here — the caller decides whether the candidate is good enough and
 then calls `set_recipe_photo`.
 """
 
+import asyncio
 from typing import Any
 
 from mcp.types import TextContent
 
 from ..recipe_maintenance import candidate_thumbnail, verify_image_dimensions
-from ..utils import find_recipe_by_id, get_remote, normalize_string
+from ..utils import find_recipe_by_id, get_remote, load_recipes, normalize_string
 
 # Below this, a candidate is a weak generic match rather than a photo of the
 # actual dish, and generating an image is usually the better option.
@@ -43,7 +44,7 @@ async def find_free_thumbnail_tool(args: dict[str, Any]) -> list[TextContent]:
     else:
         normalized = normalize_string(str(recipe_title))
         recipe = None
-        for r in remote.recipes:
+        for r in await asyncio.to_thread(load_recipes):
             if normalize_string(r.name) == normalized:
                 recipe = r
                 break

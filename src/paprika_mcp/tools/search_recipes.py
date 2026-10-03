@@ -1,10 +1,11 @@
 """Search recipes tool - searches recipe text by keyword."""
 
+import asyncio
 from typing import Any
 
 from mcp.types import TextContent
 
-from ..utils import get_categories, get_remote, search_in_text
+from ..utils import get_categories, get_remote, load_recipes, search_in_text
 
 
 def validate_pagination(page: int, page_size: int) -> str | None:
@@ -54,11 +55,11 @@ async def search_recipes_tool(args: dict[str, Any]) -> list[TextContent]:
     if pagination_error:
         return [TextContent(type="text", text=pagination_error)]
 
-    # Get the remote
     remote = get_remote()
 
-    # Fetch all recipes (excluding trashed) and sort alphabetically
-    all_recipes = [r for r in list(remote.recipes) if not r.in_trash]
+    # Fetch all recipes (excluding trashed) and sort alphabetically. Off the
+    # event loop, so health checks and other requests keep flowing meanwhile.
+    all_recipes = [r for r in await asyncio.to_thread(load_recipes) if not r.in_trash]
     all_recipes.sort(key=lambda r: r.name.lower())
 
     # Get category mappings for translating UUIDs to names

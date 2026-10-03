@@ -1,5 +1,6 @@
 """Read recipe tool - retrieves full recipe data."""
 
+import asyncio
 from typing import Any
 
 from mcp.types import TextContent
@@ -7,6 +8,7 @@ from mcp.types import TextContent
 from ..utils import (
     find_recipe_by_id,
     get_remote,
+    load_recipes,
     normalize_string,
     translate_category_uids,
 )
@@ -37,10 +39,8 @@ async def read_recipe_tool(args: dict[str, Any]) -> list[TextContent]:
                 )
             ]
     else:
-        # Search by title
-        # NOTE: This is not optimal - ideally we'd cache the recipe list
-        # and search through it, but for now we fetch all recipes
-        all_recipes = remote.recipes
+        # Search by title (off the event loop; see load_recipes)
+        all_recipes = await asyncio.to_thread(load_recipes)
 
         # Normalize the search title
         normalized_search = normalize_string(str(recipe_title))

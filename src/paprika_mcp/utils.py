@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import unicodedata
 from datetime import date, timedelta
@@ -242,6 +243,24 @@ def reset_remote() -> None:
     """Drop the cached Remote so the next call re-authenticates."""
     global _remote
     _remote = None
+
+
+# Serializes full-library loads so a tool call that arrives during the startup
+# warm-up waits for it instead of racing it on the same cache files.
+_recipes_lock = threading.Lock()
+
+
+def load_recipes() -> list[Any]:
+    """Return every recipe. Blocking: call via `asyncio.to_thread` from async code.
+
+    On Render's free plan the disk cache is wiped on every spin-down, so the
+    first load re-downloads the whole library (~420 recipes, 25-40s; Paprika
+    throttles per account, so fetching in parallel does not help). Run on the
+    event loop, that froze the server: no SSE keepalive pings, no health
+    checks, and the claude.ai connector dropped the call.
+    """
+    with _recipes_lock:
+        return list(get_remote().recipes)
 
 
 def find_recipe_by_id(remote: Remote, recipe_id: str) -> Any | None:

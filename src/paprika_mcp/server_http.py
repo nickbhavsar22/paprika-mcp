@@ -14,6 +14,8 @@ no-auth mode.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -25,6 +27,9 @@ from starlette.routing import Mount, Route
 
 from .photo import MAX_DOWNLOAD_BYTES, normalize_to_jpeg, stage_photo
 from .server import app as mcp_app
+from .utils import load_recipes
+
+logger = logging.getLogger(__name__)
 
 
 def _required_env(name: str) -> str:
@@ -44,10 +49,21 @@ session_manager = StreamableHTTPSessionManager(
 )
 
 
+def _warm_recipe_cache() -> None:
+    """Fill the recipe cache at boot. The free plan's disk is empty after every
+    spin-down, so without this the first search pays for the whole download."""
+    try:
+        load_recipes()
+    except Exception:
+        logger.exception("Recipe cache warm-up failed; first call will retry")
+
+
 @asynccontextmanager
 async def lifespan(_app):
     async with session_manager.run():
+        warmup = asyncio.create_task(asyncio.to_thread(_warm_recipe_cache))
         yield
+        warmup.cancel()
 
 
 async def healthz(_request: Request) -> PlainTextResponse:
