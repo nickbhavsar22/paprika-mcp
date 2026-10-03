@@ -40,6 +40,8 @@ from .search_recipes import TOOL_DEFINITION as SEARCH_RECIPES_DEF
 from .search_recipes import search_recipes_tool
 from .set_recipe_photo import TOOL_DEFINITION as SET_RECIPE_PHOTO_DEF
 from .set_recipe_photo import set_recipe_photo_tool
+from .set_recipe_rating import TOOL_DEFINITION as SET_RECIPE_RATING_DEF
+from .set_recipe_rating import set_recipe_rating_tool
 from .update_grocery import TOOL_DEFINITION as UPDATE_GROCERY_DEF
 from .update_grocery import update_grocery_tool
 from .update_meal import TOOL_DEFINITION as UPDATE_MEAL_DEF
@@ -70,6 +72,10 @@ TOOLS = {
     "update_recipe_categories": {
         "definition": UPDATE_RECIPE_CATEGORIES_DEF,
         "handler": update_recipe_categories_tool,
+    },
+    "set_recipe_rating": {
+        "definition": SET_RECIPE_RATING_DEF,
+        "handler": set_recipe_rating_tool,
     },
     "delete_recipe": {
         "definition": DELETE_RECIPE_DEF,
@@ -171,6 +177,7 @@ __all__ = [
     "read_recipe_tool",
     "search_recipes_tool",
     "set_recipe_photo_tool",
+    "set_recipe_rating_tool",
     "update_grocery_tool",
     "update_meal_tool",
     "update_recipe_categories_tool",
