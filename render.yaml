@@ -37,3 +37,7 @@ services:
       # Free instant key at https://www.pexels.com/api/
       - key: PEXELS_API_KEY
         sync: false
+      # Optional: enables generate_thumbnail (ChatGPT Images, paid per image).
+      # Without it, the assistant falls back to the Higgsfield connector.
+      - key: OPENAI_API_KEY
+        sync: false

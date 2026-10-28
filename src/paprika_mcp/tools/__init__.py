@@ -20,6 +20,8 @@ from .find_free_thumbnail import TOOL_DEFINITION as FIND_FREE_THUMBNAIL_DEF
 from .find_free_thumbnail import find_free_thumbnail_tool
 from .format_fraction import TOOL_DEFINITION as FORMAT_FRACTION_DEF
 from .format_fraction import format_fraction_tool
+from .generate_thumbnail import TOOL_DEFINITION as GENERATE_THUMBNAIL_DEF
+from .generate_thumbnail import generate_thumbnail_tool
 from .get_photo_upload_link import TOOL_DEFINITION as GET_PHOTO_UPLOAD_LINK_DEF
 from .get_photo_upload_link import get_photo_upload_link_tool
 from .list_categories import TOOL_DEFINITION as LIST_CATEGORIES_DEF
@@ -88,6 +90,10 @@ TOOLS = {
     "find_free_thumbnail": {
         "definition": FIND_FREE_THUMBNAIL_DEF,
         "handler": find_free_thumbnail_tool,
+    },
+    "generate_thumbnail": {
+        "definition": GENERATE_THUMBNAIL_DEF,
+        "handler": generate_thumbnail_tool,
     },
     "get_photo_upload_link": {
         "definition": GET_PHOTO_UPLOAD_LINK_DEF,
@@ -167,6 +173,7 @@ __all__ = [
     "delete_recipe_tool",
     "find_free_thumbnail_tool",
     "format_fraction_tool",
+    "generate_thumbnail_tool",
     "get_photo_upload_link_tool",
     "list_categories_tool",
     "list_groceries_tool",

@@ -1,9 +1,9 @@
 """Thumbnail sourcing prompt - free image first, generation only as a fallback.
 
-The generation steps run on OTHER MCP servers that the client has connected
-(an OpenAI/ChatGPT images server, or Higgsfield). This server can't call them,
-so the chain is expressed as instructions for the assistant to follow, using our
-`find_free_thumbnail` and `set_recipe_photo` tools for the ends of the pipeline.
+Tiers 1 and 2 are tools on this server (`find_free_thumbnail`, then
+`generate_thumbnail`, which calls OpenAI's image model itself). Tier 3 runs on
+the Higgsfield MCP that the client may have connected; this server can't call
+it, so that step is expressed as instructions for the assistant.
 """
 
 from typing import Any
@@ -31,20 +31,20 @@ Call `find_free_thumbnail` with the recipe's `id`.
   before spending money on generation.
 - If nothing is found, go to tier 2.
 
-## 2. Generate with the OpenAI / ChatGPT images MCP
+## 2. Generate with ChatGPT Images (OpenAI) — `generate_thumbnail`
 Only if tier 1 found nothing usable.
 
-Check the tools available to you for an OpenAI-images-style image generation
-tool. If one is connected, call it with the prompt template below, then attach
-the result:
-- If it returns a hosted URL → `set_recipe_photo(id=..., image_url=<url>)`
-- If it returns base64 data → `set_recipe_photo(id=..., image_base64=<data>)`
+Call `generate_thumbnail(id=<recipe id>)`. It builds the food-photo prompt from
+the recipe, generates the image with OpenAI's gpt-image-2, and attaches it in
+one step (about $0.06 at the default medium quality). Pass `dish_description` if
+the recipe's own description is missing or unhelpful. **Done.**
 
-If no such server is connected, say so briefly and go to tier 3.
+If it reports it isn't configured, or that generation failed, go to tier 3.
 
 ## 3. Generate with the Higgsfield MCP
 Only if tiers 1 and 2 both failed. Use the Higgsfield image generation tool with
-the same prompt template, then attach the returned URL with `set_recipe_photo`.
+the prompt template below (`generate_thumbnail`'s failure message includes the
+filled-in prompt), then attach the returned URL with `set_recipe_photo`.
 
 If Higgsfield isn't connected either, tell the user no thumbnail could be
 sourced and what they can do (give you an image URL, or upload a photo — call
@@ -55,7 +55,8 @@ sourced and what they can do (give you an image URL, or upload a photo — call
     Professional food photography of {recipe name}.
     {one-line description of the finished dish, from the recipe}
     Overhead three-quarter angle, natural window light, shallow depth of field,
-    plated on a simple ceramic dish against a clean neutral background.
+    served on a simple ceramic dish, or in fitting glassware for a drink,
+    against a clean neutral background.
     Appetizing, realistic, high detail. No text, no logos, no hands, no utensils
     in frame.
 
@@ -90,8 +91,8 @@ PROMPT_DEFINITION = {
     "name": "set_recipe_thumbnail",
     "description": (
         "Workflow for giving a recipe a thumbnail: try to find a free real photo "
-        "first, then generate one with the OpenAI images MCP, and only fall back "
-        "to Higgsfield if that's unavailable."
+        "first, then generate one with ChatGPT Images (`generate_thumbnail`), and "
+        "only fall back to Higgsfield if that's unavailable."
     ),
     "arguments": [
         {

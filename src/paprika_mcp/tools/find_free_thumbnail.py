@@ -75,8 +75,9 @@ async def find_free_thumbnail_tool(args: dict[str, Any]) -> list[TextContent]:
                 text=(
                     f"No free thumbnail found for '{recipe.name}'.\n\n"
                     "Nothing usable on the recipe's source page, linked video, "
-                    "Pexels, or Wikimedia Commons. Next step: generate an image "
-                    "(see the `set_recipe_thumbnail` prompt for the chain)."
+                    "Pexels, or Wikimedia Commons. Next step: generate one with "
+                    "`generate_thumbnail` (OpenAI; confirm the cost with the user "
+                    "first). Use Higgsfield only if that tool is unavailable."
                 ),
             )
         ]
@@ -109,7 +110,7 @@ async def find_free_thumbnail_tool(args: dict[str, Any]) -> list[TextContent]:
         if confident
         else (
             "Weak candidate. Show the user the URL and ask, or generate an image "
-            "instead (see the `set_recipe_thumbnail` prompt)."
+            "instead with `generate_thumbnail`."
         )
     )
 
@@ -139,8 +140,8 @@ TOOL_DEFINITION = {
         "confidence score. It does NOT attach anything: pass the returned URL to "
         "`set_recipe_photo` if it looks right. Also re-checks a thumbnail the recipe "
         "already has, and proposes a replacement when that one is a logo or too "
-        "small to use. If nothing is found, fall back to "
-        "image generation (see the `set_recipe_thumbnail` prompt for the full chain)."
+        "small to use. If nothing is found, generate one with `generate_thumbnail` "
+        "(OpenAI), and use Higgsfield only if that tool is unavailable."
     ),
     "inputSchema": {
         "type": "object",
